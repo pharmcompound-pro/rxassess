@@ -75,21 +75,15 @@ function DynamicSection({ section, data, setData }: any) {
         {section.description && <p style={{ fontSize: 13, color: muted, marginBottom: 12 }}>{section.description}</p>}
         {section.fields?.map((field: any) => {
           switch (field.type) {
-            case 'boolean':
-              return <Toggle key={field.id} checked={data[field.id] === true} onChange={(v: boolean) => setData({ ...data, [field.id]: v })} label={field.label} isDanger={field.is_red_flag} />
-            case 'select':
-              return <Select key={field.id} label={field.label} value={data[field.id]} onChange={(v: string) => setData({ ...data, [field.id]: v })} options={field.options || []} required={field.required} />
-            case 'textarea':
-              return <Textarea key={field.id} label={field.label} value={data[field.id]} onChange={(v: string) => setData({ ...data, [field.id]: v })} placeholder="" />
-            default:
-              return <Input key={field.id} label={field.label} value={data[field.id]} onChange={(v: string) => setData({ ...data, [field.id]: v })} required={field.required} />
+            case 'boolean': return <Toggle key={field.id} checked={data[field.id] === true} onChange={(v: boolean) => setData({ ...data, [field.id]: v })} label={field.label} isDanger={field.is_red_flag} />
+            case 'select': return <Select key={field.id} label={field.label} value={data[field.id]} onChange={(v: string) => setData({ ...data, [field.id]: v })} options={field.options || []} required={field.required} />
+            case 'textarea': return <Textarea key={field.id} label={field.label} value={data[field.id]} onChange={(v: string) => setData({ ...data, [field.id]: v })} placeholder="" />
+            default: return <Input key={field.id} label={field.label} value={data[field.id]} onChange={(v: string) => setData({ ...data, [field.id]: v })} required={field.required} />
           }
         })}
       </div>
       {hasRedFlag && (
-        <InfoBox color="danger" icon="🚨" title="Red Flag(s) Identified — Consider Referral">
-          One or more red flags are present. This may be beyond pharmacist prescribing scope. Document referral and rationale.
-        </InfoBox>
+        <InfoBox color="danger" icon="🚨" title="Red Flag(s) Identified — Consider Referral">One or more red flags are present. This may be beyond pharmacist prescribing scope.</InfoBox>
       )}
     </div>
   )
@@ -100,14 +94,12 @@ export default function DynamicAssessment() {
   const code = params.code as string
   const { staff, loading: staffLoading } = useStaff()
   const router = useRouter()
-
   const [ailment, setAilment] = useState<any>(null)
   const [step, setStep] = useState(0)
   const [assessmentId, setAssessmentId] = useState<string | null>(null)
   const [patientId, setPatientId] = useState<string | null>(null)
   const [completed, setCompleted] = useState(false)
   const [saving, setSaving] = useState(false)
-
   const [patient, setPatient] = useState<any>({})
   const [sectionData, setSectionData] = useState<Record<string, any>>({})
   const [rx, setRx] = useState<any>({})
@@ -117,7 +109,6 @@ export default function DynamicAssessment() {
   const [isNewPatient, setIsNewPatient] = useState(false)
 
   useEffect(() => { async function load() { const d = await getAilment(code); setAilment(d) }; load() }, [code])
-
   useEffect(() => {
     if (!staff || !searchQuery || searchQuery.length < 2) { setSearchResults([]); return }
     const t = setTimeout(async () => { const r = await searchPatients(staff.pharmacy_id, searchQuery); setSearchResults(r) }, 300)
@@ -127,8 +118,6 @@ export default function DynamicAssessment() {
   const template = ailment?.assessment_template
   const sections = template?.sections || []
   const drugs = ailment?.eligible_drugs || []
-
-  // Steps: Patient, ...template sections, Prescribe, Follow-Up, Review
   const stepNames = ['Patient', ...sections.map((s: any) => s.title), 'Prescribe', 'Follow-Up', 'Review']
   const stepIcons = ['👤', ...sections.map(() => '📋'), '💊', '📅', '✓']
   const totalSteps = stepNames.length
@@ -138,6 +127,33 @@ export default function DynamicAssessment() {
   const isFollowUpStep = step === totalSteps - 2
   const isReviewStep = step === totalSteps - 1
   const sectionIndex = step - 1
+
+  // Compute red flags from section data
+  function getRedFlagInfo() {
+    const redFlagList: string[] = []
+    for (const [secId, secData] of Object.entries(sectionData)) {
+      const section = sections.find((s: any) => s.id === secId)
+      if (!section || !secData || typeof secData !== 'object') continue
+      for (const field of (section.fields || [])) {
+        if (field.is_red_flag && (secData as any)[field.id] === true) {
+          redFlagList.push(field.label)
+        }
+      }
+    }
+    return { hasRedFlags: redFlagList.length > 0, redFlagList }
+  }
+
+  function getBillingInfo() {
+    const isVirtual = encounter.mode !== 'in_person'
+    const rxIssued = rx.selectedDrug != null && rx.selectedDrug >= 0
+    const isReferral = rx.isReferral === true
+    const pin = rxIssued
+      ? (isVirtual ? ailment?.pin_rx_virtual : ailment?.pin_rx_in_person)
+      : (isVirtual ? ailment?.pin_no_rx_virtual : ailment?.pin_no_rx_in_person)
+    const fee = isVirtual ? '$15.00' : '$19.00'
+    const pinType = `${rxIssued ? 'Rx Issued' : 'No Rx Issued'} (${isVirtual ? 'Virtual' : 'In-Person'})`
+    return { pin, fee, pinType, isReferral }
+  }
 
   async function handleSelectPatient(p: any) {
     setPatientId(p.id)
@@ -164,25 +180,21 @@ export default function DynamicAssessment() {
   async function handleComplete() {
     if (!assessmentId || !staff || !ailment) return; setSaving(true)
     const allData = { patient, sections: sectionData, prescription: rx, encounter }
-    const hasRedFlags = Object.values(sectionData).some((sec: any) => sec && typeof sec === 'object' && Object.entries(sec).some(([_, v]) => v === true))
-    const outcome = hasRedFlags ? 'referred_physician' : rx.selectedDrug != null && rx.selectedDrug >= 0 ? 'prescribed' : 'self_care'
-
+    const { hasRedFlags } = getRedFlagInfo()
+    const outcome = (rx.isReferral || (hasRedFlags && !rx.redFlagAcknowledged)) ? 'referred_physician' : rx.selectedDrug != null && rx.selectedDrug >= 0 ? 'prescribed' : 'self_care'
     await completeAssessment(assessmentId, allData, outcome, rx.impression || '')
-
     if (rx.selectedDrug != null && rx.selectedDrug >= 0 && outcome !== 'referred_physician') {
-      const drug = drugs[rx.selectedDrug]
-      await createPrescription(assessmentId, staff.pharmacy_id, patientId!, staff.id, drug)
+      await createPrescription(assessmentId, staff.pharmacy_id, patientId!, staff.id, drugs[rx.selectedDrug])
     }
-
     if (patient.hasPcp !== false && patient.pcpName) {
       const drug = rx.selectedDrug != null && rx.selectedDrug >= 0 ? drugs[rx.selectedDrug] : null
-      const content = `Dear ${patient.pcpName},\n\nRE: ${patient.firstName} ${patient.lastName} (DOB: ${patient.dob})\n\nThis letter is to notify you that the above-named patient presented at ${staff.pharmacies?.name || 'our pharmacy'} on ${new Date().toLocaleDateString('en-CA')} for assessment of ${ailment.name} under the Ontario Minor Ailments Program (O. Reg. 256/24).\n\nAssessment Mode: ${encounter.mode === 'in_person' ? 'In-Person' : encounter.mode === 'virtual_video' ? 'Virtual (Video)' : 'Virtual (Phone)'}\n\nClinical Assessment:\n${rx.impression || 'Assessment consistent with uncomplicated presentation. No red flags identified.'}\n\n${drug ? `Treatment: ${drug.drug} — ${drug.sig}${rx.refills > 0 ? `\nRefills: ${rx.refills} (Rationale: ${rx.refillRationale || 'See clinical notes'})` : ''}` : 'No prescription issued. Self-care advice provided.'}\n\nFollow-Up Plan:\n${rx.followUpPlan || 'Patient advised to return if symptoms do not improve or worsen.'}\n\n${encounter.dispenseElsewhere ? 'Note: Patient elected to have prescription dispensed at another pharmacy.\n\n' : ''}This notification is provided in accordance with OCP requirements.\n\nRespectfully,\n\n${staff.first_name} ${staff.last_name}, RPh\nOCP Registration: ${staff.ocp_registration_number}\n${staff.pharmacies?.name}\n${staff.pharmacies?.address_line1}\n${staff.pharmacies?.city}, ${staff.pharmacies?.province} ${staff.pharmacies?.postal_code}\nTel: ${staff.pharmacies?.phone}`
+      const noRxInfo = rx.selectedDrug === -1 ? `\nReason: ${rx.noRxReason || 'See notes'}${rx.noRxRationale ? `\nRationale: ${rx.noRxRationale}` : ''}${rx.otcRecommendation ? `\nOTC: ${rx.otcRecommendation}` : ''}` : ''
+      const referralInfo = rx.isReferral ? `\nReferred to: ${rx.referredTo || 'Another healthcare provider'}` : ''
+      const content = `Dear ${patient.pcpName},\n\nRE: ${patient.firstName} ${patient.lastName} (DOB: ${patient.dob})\n\nThis letter is to notify you that the above-named patient presented at ${staff.pharmacies?.name || 'our pharmacy'} on ${new Date().toLocaleDateString('en-CA')} for assessment of ${ailment.name} under the Ontario Minor Ailments Program (O. Reg. 256/24).\n\nAssessment Mode: ${encounter.mode === 'in_person' ? 'In-Person' : 'Virtual'}\n\nClinical Assessment:\n${rx.impression || 'No red flags identified.'}\n\n${drug ? `Treatment: ${drug.drug} — ${drug.sig}${rx.refills > 0 ? `\nRefills: ${rx.refills}` : ''}` : `No prescription issued.${noRxInfo}`}${referralInfo}\n\nFollow-Up: ${rx.followUpPlan || 'Return if symptoms worsen.'}\n\nRespectfully,\n${staff.first_name} ${staff.last_name}, RPh\nOCP #${staff.ocp_registration_number}\n${staff.pharmacies?.name}\nTel: ${staff.pharmacies?.phone}`
       await createPcpNotification(assessmentId, patientId!, staff.pharmacy_id, { name: patient.pcpName, fax: patient.pcpFax }, content)
     }
-
-    // Billing: different fees for in-person vs virtual
     const rxIssued = rx.selectedDrug != null && rx.selectedDrug >= 0 && outcome !== 'referred_physician'
-    const isReferral = outcome === 'referred_physician'
+    const isReferral = outcome === 'referred_physician' || rx.isReferral === true
     await createClaim(assessmentId, staff.pharmacy_id, patientId!, ailment, encounter.mode, rxIssued, isReferral)
     setSaving(false); setCompleted(true)
   }
@@ -191,15 +203,16 @@ export default function DynamicAssessment() {
   if (!staff) { router.push('/login'); return null }
 
   if (completed) {
+    const billing = getBillingInfo()
     return (
       <div style={{ minHeight: '100vh', background: bg, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
         <div style={{ textAlign: 'center', maxWidth: 420 }}>
           <div style={{ width: 80, height: 80, borderRadius: 40, background: 'rgba(34,197,94,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px', border: '2px solid rgba(34,197,94,0.3)', fontSize: 36 }}>✓</div>
           <h2 style={{ color: text, fontSize: 22, fontWeight: 800, margin: '0 0 8px' }}>Assessment Complete</h2>
           <p style={{ color: muted, fontSize: 14, margin: '0 0 8px' }}>{ailment.name}</p>
-          <p style={{ color: dim, fontSize: 13, margin: '0 0 24px' }}>Record locked. PCP notification generated. Claim ready.</p>
+          <p style={{ color: dim, fontSize: 13, margin: '0 0 24px' }}>Record locked and saved.</p>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
-            {['RECORD LOCKED', `CLAIM: ${encounter.mode === 'in_person' ? '$18' : '$15'}`, patient.hasPcp !== false ? 'PCP LETTER PENDING' : 'NO PCP — PHARMACIST MONITORING'].map(t => (
+            {['RECORD LOCKED', `PIN: ${billing.pin}`, `FEE: ${billing.fee}`, ...(billing.isReferral ? ['SSC: 4'] : []), patient.hasPcp !== false ? 'PCP LETTER PENDING' : 'NO PCP'].map(t => (
               <span key={t} style={{ padding: '4px 12px', borderRadius: 6, fontSize: 11, fontWeight: 600, background: 'rgba(34,197,94,0.12)', color: success, border: '1px solid rgba(34,197,94,0.25)' }}>{t}</span>
             ))}
           </div>
@@ -214,19 +227,20 @@ export default function DynamicAssessment() {
     )
   }
 
+  const { hasRedFlags, redFlagList } = getRedFlagInfo()
+
   return (
     <div style={{ minHeight: '100vh', background: bg, color: text }}>
+      {/* HEADER */}
       <div style={{ background: surface, borderBottom: `1px solid ${border}`, padding: '14px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, zIndex: 100 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <div style={{ width: 32, height: 32, borderRadius: 8, background: 'linear-gradient(135deg, #3B82F6, #8B5CF6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 14, color: '#fff' }}>Rx</div>
-          <div>
-            <div style={{ fontWeight: 800, fontSize: 15 }}>RxAssess</div>
-            <div style={{ fontSize: 10, color: dim }}>MINOR AILMENT DOCUMENTATION</div>
-          </div>
+          <div><div style={{ fontWeight: 800, fontSize: 15 }}>RxAssess</div><div style={{ fontSize: 10, color: dim }}>MINOR AILMENT DOCUMENTATION</div></div>
         </div>
         <span style={{ padding: '4px 12px', borderRadius: 6, fontSize: 11, fontWeight: 600, background: 'rgba(167,139,250,0.12)', color: '#A78BFA', border: '1px solid rgba(167,139,250,0.25)' }}>{ailment.code} — {ailment.name}</span>
       </div>
 
+      {/* STEP TABS */}
       <div style={{ padding: '16px 24px 0', display: 'flex', gap: 4, overflowX: 'auto' }}>
         {stepNames.map((s, i) => (
           <button key={i} onClick={() => patientId && handleStepChange(i)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 8, border: 'none', background: i === step ? 'rgba(59,130,246,0.12)' : 'transparent', color: i === step ? accent : i < step ? success : dim, fontSize: 12, fontWeight: i === step ? 700 : 500, cursor: patientId ? 'pointer' : 'default', whiteSpace: 'nowrap' }}>
@@ -234,7 +248,6 @@ export default function DynamicAssessment() {
           </button>
         ))}
       </div>
-
       <div style={{ margin: '12px 24px 0', height: 3, background: surfaceAlt, borderRadius: 2, overflow: 'hidden' }}>
         <div style={{ height: '100%', width: `${((step + 1) / totalSteps) * 100}%`, background: `linear-gradient(90deg, ${accent}, #8B5CF6)`, borderRadius: 2, transition: 'width 0.3s' }} />
       </div>
@@ -243,41 +256,39 @@ export default function DynamicAssessment() {
         <h2 style={{ fontSize: 20, fontWeight: 800, margin: '0 0 4px' }}>{stepIcons[step]} {stepNames[step]}</h2>
         <p style={{ fontSize: 12, color: dim, margin: '0 0 20px' }}>Step {step + 1} of {totalSteps}</p>
 
-        {/* ============ PATIENT STEP ============ */}
+        {/* ==================== PATIENT STEP ==================== */}
         {isPatientStep && !patientId && (
           <div>
-            {/* Encounter Mode - NEW */}
+            {/* Assessment Mode */}
             <div style={{ padding: 16, background: surfaceAlt, borderRadius: 10, border: `1px solid ${border}`, marginBottom: 20 }}>
               <div style={{ fontSize: 12, fontWeight: 600, color: muted, marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Assessment Mode</div>
               <div style={{ display: 'flex', gap: 8 }}>
-                {[
-                  { value: 'in_person', label: 'In-Person', fee: '$18' },
-                  { value: 'virtual_video', label: 'Virtual (Video)', fee: '$15' },
-                  { value: 'virtual_phone', label: 'Virtual (Phone)', fee: '$15' },
-                ].map(m => (
-                  <button key={m.value} onClick={() => setEncounter({ ...encounter, mode: m.value })} style={{
-                    flex: 1, padding: '10px 8px', borderRadius: 8, border: `2px solid ${encounter.mode === m.value ? accent : border}`,
-                    background: encounter.mode === m.value ? 'rgba(59,130,246,0.12)' : 'transparent', color: encounter.mode === m.value ? accent : muted,
-                    fontSize: 12, fontWeight: 600, cursor: 'pointer', textAlign: 'center'
-                  }}>
+                {[{ value: 'in_person', label: 'In-Person', fee: '$19' }, { value: 'virtual_video', label: 'Virtual (Video)', fee: '$15' }, { value: 'virtual_phone', label: 'Virtual (Phone)', fee: '$15' }].map(m => (
+                  <button key={m.value} onClick={() => setEncounter({ ...encounter, mode: m.value })} style={{ flex: 1, padding: '10px 8px', borderRadius: 8, border: `2px solid ${encounter.mode === m.value ? accent : border}`, background: encounter.mode === m.value ? 'rgba(59,130,246,0.12)' : 'transparent', color: encounter.mode === m.value ? accent : muted, fontSize: 12, fontWeight: 600, cursor: 'pointer', textAlign: 'center' }}>
                     {m.label}<br /><span style={{ fontSize: 10, color: dim }}>{m.fee}</span>
                   </button>
                 ))}
               </div>
               {encounter.mode !== 'in_person' && (
-                <InfoBox color="accent" icon="ℹ" title="Virtual Care Policy">
-                  Virtual minor ailment services must be provided from an eligible pharmacy location per OCP Virtual Care Policy. Ensure the virtual modality is suitable for this patient assessment.
-                </InfoBox>
-              )}
-            </div>
-{encounter.mode !== 'in_person' && (
-                <InfoBox color="accent" icon="ℹ" title="Virtual Care Policy">
-                  Virtual minor ailment services must be provided from an eligible pharmacy location per OCP Virtual Care Policy. Ensure the virtual modality is suitable for this patient assessment.
-                </InfoBox>
+                <InfoBox color="accent" icon="ℹ" title="Virtual Care Policy">Virtual minor ailment services must be provided from an eligible pharmacy location per OCP Virtual Care Policy.</InfoBox>
               )}
             </div>
 
-            <Input label="Search Existing Patient" ...
+            {/* Pre-Assessment Checks */}
+            <div style={{ padding: 16, background: surfaceAlt, borderRadius: 10, border: `1px solid ${border}`, marginBottom: 20 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: muted, marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Pre-Assessment Checks (EO Notice)</div>
+              <Toggle checked={encounter.consentObtained === true} onChange={(v: boolean) => setEncounter({ ...encounter, consentObtained: v })} label="Informed consent obtained from patient or substitute decision-maker" />
+              <Select label="Consent method" value={encounter.consentMethod} onChange={(v: string) => setEncounter({ ...encounter, consentMethod: v })} options={['Verbal', 'Written']} required />
+              <Toggle checked={encounter.selfFamilyCheck === true} onChange={(v: boolean) => setEncounter({ ...encounter, selfFamilyCheck: v })} label="Confirmed: Patient is NOT the pharmacist or a family member" />
+              <Toggle checked={encounter.existingRxCheck === true} onChange={(v: boolean) => setEncounter({ ...encounter, existingRxCheck: v })} label="Confirmed: Patient does NOT have an existing Rx for this ailment" />
+              {encounter.selfFamilyCheck === false && encounter.selfFamilyCheck !== undefined && (
+                <InfoBox color="danger" icon="⊘" title="Cannot Proceed">Pharmacists cannot conduct minor ailment services for themselves or a family member.</InfoBox>
+              )}
+              {encounter.existingRxCheck === false && encounter.existingRxCheck !== undefined && (
+                <InfoBox color="danger" icon="⊘" title="Cannot Bill">Cannot claim if patient has an existing Rx that could be filled, adapted, or extended.</InfoBox>
+              )}
+            </div>
+
             <Input label="Search Existing Patient" value={searchQuery} onChange={setSearchQuery} placeholder="Type last name or health card #..." />
             {searchResults.length > 0 && (
               <div style={{ background: surfaceAlt, borderRadius: 8, border: `1px solid ${border}`, marginBottom: 16 }}>
@@ -302,22 +313,11 @@ export default function DynamicAssessment() {
                 </div>
                 <Input label="Phone" value={patient.phone} onChange={(v: string) => setPatient({ ...patient, phone: v })} />
                 <Toggle checked={patient.hasPcp !== false} onChange={(v: boolean) => setPatient({ ...patient, hasPcp: v })} label="Has a primary care provider" />
-                {patient.hasPcp === false && (
-                  <InfoBox color="warning" icon="⚠" title="No Primary Care Provider">
-                    Per OCP guidelines, as the prescriber you assume responsibility for monitoring and follow-up on the treatment plan, essentially serving as the primary care provider until the patient's care can be transitioned to another healthcare professional.
-                  </InfoBox>
-                )}
-                {patient.hasPcp !== false && (
-                  <>
-                    <Input label="PCP Name" value={patient.pcpName} onChange={(v: string) => setPatient({ ...patient, pcpName: v })} />
-                    <Input label="PCP Fax" value={patient.pcpFax} onChange={(v: string) => setPatient({ ...patient, pcpFax: v })} />
-                  </>
-                )}
+                {patient.hasPcp === false && (<InfoBox color="warning" icon="⚠" title="No PCP">As the prescriber you assume responsibility for monitoring and follow-up.</InfoBox>)}
+                {patient.hasPcp !== false && (<><Input label="PCP Name" value={patient.pcpName} onChange={(v: string) => setPatient({ ...patient, pcpName: v })} /><Input label="PCP Fax" value={patient.pcpFax} onChange={(v: string) => setPatient({ ...patient, pcpFax: v })} /></>)}
                 <Textarea label="Allergies" value={patient.allergies} onChange={(v: string) => setPatient({ ...patient, allergies: v })} placeholder="e.g., Sulfonamides – rash; NKDA" />
                 <Textarea label="Current Medications" value={patient.medications} onChange={(v: string) => setPatient({ ...patient, medications: v })} placeholder="e.g., Metformin 500mg BID" />
-                <button onClick={handleNewPatient} disabled={saving || !patient.firstName || !patient.lastName || !patient.dob} style={{ width: '100%', padding: 12, borderRadius: 8, border: 'none', background: accent, color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer', marginTop: 12, opacity: saving ? 0.7 : 1 }}>
-                  {saving ? 'Creating...' : 'Create Patient & Start Assessment'}
-                </button>
+                <button onClick={handleNewPatient} disabled={saving || !patient.firstName || !patient.lastName || !patient.dob} style={{ width: '100%', padding: 12, borderRadius: 8, border: 'none', background: accent, color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer', marginTop: 12, opacity: saving ? 0.7 : 1 }}>{saving ? 'Creating...' : 'Create Patient & Start Assessment'}</button>
               </div>
             )}
           </div>
@@ -325,356 +325,227 @@ export default function DynamicAssessment() {
 
         {isPatientStep && patientId && (
           <div>
-            {/* Encounter mode display */}
             <div style={{ padding: 12, background: surfaceAlt, borderRadius: 8, border: `1px solid ${border}`, marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ fontSize: 12, color: muted }}>Assessment Mode</span>
-              <span style={{ fontSize: 12, fontWeight: 600, color: accent }}>{encounter.mode === 'in_person' ? 'In-Person ($18)' : encounter.mode === 'virtual_video' ? 'Virtual Video ($15)' : 'Virtual Phone ($15)'}</span>
+              <span style={{ fontSize: 12, fontWeight: 600, color: accent }}>{encounter.mode === 'in_person' ? 'In-Person ($19)' : 'Virtual ($15)'}</span>
             </div>
-
             <div style={{ padding: 16, background: surfaceAlt, borderRadius: 10, border: `1px solid ${border}` }}>
               <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>{patient.firstName} {patient.lastName}</div>
               <div style={{ fontSize: 13, color: muted }}>DOB: {patient.dob} {patient.hcn && `| HCN: ${patient.hcn}`}</div>
               <div style={{ fontSize: 13, color: muted }}>PCP: {patient.hasPcp !== false ? patient.pcpName || 'Not specified' : 'No PCP'}</div>
               <div style={{ fontSize: 13, color: muted }}>Allergies: {patient.allergies || 'NKDA'}</div>
-              <div style={{ marginTop: 8, padding: '4px 10px', display: 'inline-block', borderRadius: 6, fontSize: 11, fontWeight: 600, background: 'rgba(34,197,94,0.12)', color: success, border: '1px solid rgba(34,197,94,0.25)' }}>✓ Patient Selected</div>
+              <div style={{ marginTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <span style={{ padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600, background: 'rgba(34,197,94,0.12)', color: success, border: '1px solid rgba(34,197,94,0.25)' }}>✓ Patient Selected</span>
+                {encounter.consentObtained && <span style={{ padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600, background: 'rgba(34,197,94,0.12)', color: success, border: '1px solid rgba(34,197,94,0.25)' }}>✓ Consent</span>}
+              </div>
             </div>
-
-            {patient.hasPcp === false && (
-              <InfoBox color="warning" icon="⚠" title="No PCP — Pharmacist Assumes Monitoring Role">
-                You are responsible for monitoring and follow-up until the patient's care can be transitioned to another healthcare professional.
-              </InfoBox>
-            )}
+            {patient.hasPcp === false && (<InfoBox color="warning" icon="⚠" title="No PCP — Pharmacist Monitoring">You are responsible for follow-up until care can be transitioned.</InfoBox>)}
           </div>
         )}
 
-        {/* ============ DYNAMIC TEMPLATE SECTIONS ============ */}
+        {/* ==================== DYNAMIC SECTIONS ==================== */}
         {!isPatientStep && !isPrescribeStep && !isFollowUpStep && !isReviewStep && sectionIndex >= 0 && sectionIndex < sections.length && (
-          <DynamicSection
-            section={sections[sectionIndex]}
-            data={sectionData[sections[sectionIndex].id] || {}}
-            setData={(d: any) => setSectionData({ ...sectionData, [sections[sectionIndex].id]: d })}
-          />
+          <DynamicSection section={sections[sectionIndex]} data={sectionData[sections[sectionIndex].id] || {}} setData={(d: any) => setSectionData({ ...sectionData, [sections[sectionIndex].id]: d })} />
         )}
 
-        {/* ============ PRESCRIBE STEP ============ */}
-        {isPrescribeStep && (() => {
-          const hasRedFlags = Object.values(sectionData).some((sec: any) => sec && typeof sec === 'object' && Object.entries(sec).some(([k, v]) => {
-            const section = sections.find((s: any) => s.id === Object.keys(sectionData).find(key => sectionData[key] === sec))
-            const field = section?.fields?.find((f: any) => f.id === k)
-            return field?.is_red_flag && v === true
-          }))
-          const redFlagList = Object.entries(sectionData).flatMap(([secId, secData]: any) => {
-            const section = sections.find((s: any) => s.id === secId)
-            if (!section || !secData) return []
-            return section.fields?.filter((f: any) => f.is_red_flag && secData[f.id] === true).map((f: any) => f.label) || []
-          })
-
-          return (
+        {/* ==================== PRESCRIBE STEP ==================== */}
+        {isPrescribeStep && (
           <div>
-            {/* Red Flag Warning Gate */}
+            {/* Red Flag Gate */}
             {hasRedFlags && !rx.redFlagAcknowledged && (
-              <div style={{ marginBottom: 20 }}>
-                <div style={{ padding: 20, background: 'rgba(239,68,68,0.12)', borderRadius: 10, border: '2px solid rgba(239,68,68,0.4)' }}>
-                  <div style={{ fontWeight: 800, color: danger, fontSize: 16, marginBottom: 8 }}>🚨 Red Flag(s) Identified</div>
-                  <div style={{ fontSize: 13, color: text, lineHeight: 1.6, marginBottom: 12 }}>
-                    The following red flag(s) were identified during assessment. Per OCP guidelines and the EO Notice, consider whether referral to another healthcare provider is appropriate.
-                  </div>
-                  <div style={{ padding: 12, background: 'rgba(239,68,68,0.08)', borderRadius: 8, marginBottom: 16 }}>
-                    {redFlagList.map((flag: string, i: number) => (
-                      <div key={i} style={{ fontSize: 13, color: danger, padding: '4px 0', display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span>⚠</span> {flag}
-                      </div>
-                    ))}
-                  </div>
-                  <div style={{ fontSize: 13, color: text, marginBottom: 16, lineHeight: 1.6 }}>
-                    You must choose one of the following actions:
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    <button onClick={() => { setRx({ ...rx, selectedDrug: -1, noRxReason: 'Red flags identified - referral', isReferral: true, redFlagAcknowledged: true }) }} style={{ padding: 14, borderRadius: 10, border: `2px solid ${warning}`, background: 'rgba(245,158,11,0.12)', color: text, fontSize: 14, fontWeight: 600, cursor: 'pointer', textAlign: 'left' }}>
-                      <span style={{ color: warning, fontWeight: 700 }}>→ Refer Patient</span>
-                      <div style={{ fontSize: 12, color: muted, marginTop: 4 }}>Do not prescribe. Refer to physician, NP, or emergency department. Claim will include SSC "4".</div>
-                    </button>
-                    <button onClick={() => { setRx({ ...rx, redFlagAcknowledged: true, redFlagOverrideReason: '' }) }} style={{ padding: 14, borderRadius: 10, border: `1px solid ${border}`, background: surfaceAlt, color: text, fontSize: 14, fontWeight: 600, cursor: 'pointer', textAlign: 'left' }}>
-                      <span style={{ color: text }}>→ Proceed with Clinical Judgment</span>
-                      <div style={{ fontSize: 12, color: muted, marginTop: 4 }}>I have assessed the red flag(s) and determined that treatment is appropriate. Documentation required.</div>
-                    </button>
-                  </div>
+              <div style={{ padding: 20, background: 'rgba(239,68,68,0.12)', borderRadius: 10, border: '2px solid rgba(239,68,68,0.4)', marginBottom: 20 }}>
+                <div style={{ fontWeight: 800, color: danger, fontSize: 16, marginBottom: 8 }}>🚨 Red Flag(s) Identified</div>
+                <div style={{ fontSize: 13, color: text, lineHeight: 1.6, marginBottom: 12 }}>Per OCP guidelines, consider whether referral is appropriate.</div>
+                <div style={{ padding: 12, background: 'rgba(239,68,68,0.08)', borderRadius: 8, marginBottom: 16 }}>
+                  {redFlagList.map((flag, i) => (<div key={i} style={{ fontSize: 13, color: danger, padding: '4px 0' }}>⚠ {flag}</div>))}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <button onClick={() => setRx({ ...rx, selectedDrug: -1, noRxReason: 'Red flags identified - referral', isReferral: true, redFlagAcknowledged: true })} style={{ padding: 14, borderRadius: 10, border: `2px solid ${warning}`, background: 'rgba(245,158,11,0.12)', color: text, fontSize: 14, fontWeight: 600, cursor: 'pointer', textAlign: 'left' }}>
+                    <span style={{ color: warning, fontWeight: 700 }}>→ Refer Patient</span>
+                    <div style={{ fontSize: 12, color: muted, marginTop: 4 }}>Refer to physician, NP, or ED. Claim includes SSC 4.</div>
+                  </button>
+                  <button onClick={() => setRx({ ...rx, redFlagAcknowledged: true })} style={{ padding: 14, borderRadius: 10, border: `1px solid ${border}`, background: surfaceAlt, color: text, fontSize: 14, fontWeight: 600, cursor: 'pointer', textAlign: 'left' }}>
+                    <span>→ Proceed with Clinical Judgment</span>
+                    <div style={{ fontSize: 12, color: muted, marginTop: 4 }}>Red flags assessed — treatment appropriate. Documentation required.</div>
+                  </button>
                 </div>
               </div>
             )}
 
-            {/* Red Flag Override Documentation */}
             {hasRedFlags && rx.redFlagAcknowledged && !rx.isReferral && (
-              <InfoBox color="warning" icon="⚠" title="Red Flag(s) Present — Proceeding with Treatment">
-                You have chosen to proceed despite identified red flags. Document your clinical rationale below.
-              </InfoBox>
+              <InfoBox color="warning" icon="⚠" title="Proceeding Despite Red Flags">Document your clinical rationale below.</InfoBox>
             )}
 
-            {/* Only show drug selection after red flag gate is passed (or no red flags) */}
             {(!hasRedFlags || rx.redFlagAcknowledged) && (
               <>
-                {/* Don't show drug options if referral was chosen */}
-                {!rx.isReferral && (
-                  <>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: muted, marginBottom: 16, textTransform: 'uppercase' }}>Select Treatment</div>
-                    {drugs.map((d: any, i: number) => {
-                      const selected = rx.selectedDrug === i
-                      return (
-                        <div key={i} onClick={() => setRx({ ...rx, selectedDrug: i })} style={{ padding: 16, borderRadius: 10, cursor: 'pointer', background: selected ? 'rgba(59,130,246,0.12)' : surfaceAlt, border: `2px solid ${selected ? accent : border}`, marginBottom: 10 }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                            <span style={{ fontWeight: 700, fontSize: 14 }}>{d.drug}</span>
-                            {d.firstLine && <span style={{ padding: '2px 8px', borderRadius: 6, fontSize: 10, fontWeight: 600, background: 'rgba(34,197,94,0.12)', color: success, border: '1px solid rgba(34,197,94,0.25)' }}>1st LINE</span>}
-                          </div>
-                          <div style={{ fontSize: 13, color: muted, marginBottom: 4 }}>{d.sig}</div>
-                          <div style={{ fontSize: 12, color: dim }}>{d.notes}</div>
-                          <div style={{ display: 'flex', gap: 16, marginTop: 8, fontSize: 12, color: muted }}>
-                            <span>Qty: {d.qty}</span><span>Days: {d.supply}</span>{d.odb_eligible && <span>ODB eligible</span>}
-                          </div>
-                        </div>
-                      )
-                    })}
-
-                    <div style={{ marginTop: 10, padding: 14, background: surfaceAlt, borderRadius: 10, border: `2px solid ${rx.selectedDrug === -1 ? accent : border}`, cursor: 'pointer', textAlign: 'center', color: rx.selectedDrug === -1 ? accent : muted, fontWeight: 600, fontSize: 14 }} onClick={() => setRx({ ...rx, selectedDrug: -1, isReferral: false })}>
-                      No prescription — self-care / OTC
-                    </div>
-                  </>
-                )}
-
-                {/* Referral chosen (from red flag gate or manually) */}
+                {/* Referral path */}
                 {rx.isReferral && (
                   <div style={{ padding: 16, background: 'rgba(245,158,11,0.12)', borderRadius: 10, border: `1px solid rgba(245,158,11,0.3)`, marginBottom: 16 }}>
                     <div style={{ fontWeight: 700, color: warning, fontSize: 14, marginBottom: 8 }}>Referral Selected</div>
                     <Input label="Referred to" value={rx.referredTo} onChange={(v: string) => setRx({ ...rx, referredTo: v })} placeholder="e.g., Family physician, Walk-in clinic, ED" />
                     <Textarea label="Referral reason" value={rx.noRxRationale} onChange={(v: string) => setRx({ ...rx, noRxRationale: v })} placeholder="Document reason for referral..." />
-                    <InfoBox color="accent" icon="ℹ" title="SSC 4 — Referral by Pharmacist">
-                      HNS claim will include Special Service Code &quot;4&quot; (Referral by Pharmacist).
-                    </InfoBox>
-                    <button onClick={() => setRx({ ...rx, isReferral: false, selectedDrug: undefined, redFlagAcknowledged: hasRedFlags ? true : undefined, noRxReason: '' })} style={{ padding: '8px 16px', borderRadius: 8, border: `1px solid ${border}`, background: 'transparent', color: muted, fontSize: 12, cursor: 'pointer', marginTop: 8 }}>
-                      ← Change decision — go back to treatment options
-                    </button>
+                    <InfoBox color="accent" icon="ℹ" title="SSC 4 — Referral by Pharmacist">HNS claim will include Special Service Code 4.</InfoBox>
+                    <button onClick={() => setRx({ ...rx, isReferral: false, selectedDrug: undefined, noRxReason: '' })} style={{ padding: '8px 16px', borderRadius: 8, border: `1px solid ${border}`, background: 'transparent', color: muted, fontSize: 12, cursor: 'pointer' }}>← Change decision</button>
                   </div>
                 )}
 
-                {/* No Rx Documentation — Required by EO Notice */}
-                {rx.selectedDrug === -1 && !rx.isReferral && (
-                  <div style={{ marginTop: 16, padding: 16, background: surfaceAlt, borderRadius: 10, border: `1px solid ${border}` }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: warning, marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.05em' }}>No Rx Issued — Documentation Required</div>
-                    <Select label="Reason no prescription issued" value={rx.noRxReason} onChange={(v: string) => setRx({ ...rx, noRxReason: v })} options={['OTC medication recommended', 'Non-pharmacological therapy recommended', 'Patient declined treatment', 'Condition resolved/self-limiting', 'Referral to physician/NP required']} required />
-                    {rx.noRxReason === 'Referral to physician/NP required' && (
-                      <div>
-                        <Toggle checked={rx.isReferral === true} onChange={(v: boolean) => setRx({ ...rx, isReferral: v })} label="Referral to another healthcare provider made" />
-                        {rx.isReferral && <Input label="Referred to" value={rx.referredTo} onChange={(v: string) => setRx({ ...rx, referredTo: v })} placeholder="e.g., Family physician, Walk-in clinic, ED" />}
+                {/* Drug selection (not shown if referral) */}
+                {!rx.isReferral && (
+                  <>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: muted, marginBottom: 16, textTransform: 'uppercase' }}>Select Treatment</div>
+                    {drugs.map((d: any, i: number) => (
+                      <div key={i} onClick={() => setRx({ ...rx, selectedDrug: i })} style={{ padding: 16, borderRadius: 10, cursor: 'pointer', background: rx.selectedDrug === i ? 'rgba(59,130,246,0.12)' : surfaceAlt, border: `2px solid ${rx.selectedDrug === i ? accent : border}`, marginBottom: 10 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                          <span style={{ fontWeight: 700, fontSize: 14 }}>{d.drug}</span>
+                          {d.firstLine && <span style={{ padding: '2px 8px', borderRadius: 6, fontSize: 10, fontWeight: 600, background: 'rgba(34,197,94,0.12)', color: success, border: '1px solid rgba(34,197,94,0.25)' }}>1st LINE</span>}
+                        </div>
+                        <div style={{ fontSize: 13, color: muted, marginBottom: 4 }}>{d.sig}</div>
+                        <div style={{ fontSize: 12, color: dim }}>{d.notes}</div>
+                        <div style={{ display: 'flex', gap: 16, marginTop: 8, fontSize: 12, color: muted }}><span>Qty: {d.qty}</span><span>Days: {d.supply}</span>{d.odb_eligible && <span>ODB eligible</span>}</div>
+                      </div>
+                    ))}
+                    <div style={{ marginTop: 10, padding: 14, background: surfaceAlt, borderRadius: 10, border: `2px solid ${rx.selectedDrug === -1 ? accent : border}`, cursor: 'pointer', textAlign: 'center', color: rx.selectedDrug === -1 ? accent : muted, fontWeight: 600, fontSize: 14 }} onClick={() => setRx({ ...rx, selectedDrug: -1, isReferral: false })}>
+                      No prescription — self-care / OTC
+                    </div>
+
+                    {/* No Rx Documentation */}
+                    {rx.selectedDrug === -1 && (
+                      <div style={{ marginTop: 16, padding: 16, background: surfaceAlt, borderRadius: 10, border: `1px solid ${border}` }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: warning, marginBottom: 12, textTransform: 'uppercase' }}>No Rx Issued — Documentation Required</div>
+                        <Select label="Reason" value={rx.noRxReason} onChange={(v: string) => setRx({ ...rx, noRxReason: v })} options={['OTC medication recommended', 'Non-pharmacological therapy', 'Patient declined treatment', 'Condition self-limiting', 'Referral to physician/NP required']} required />
+                        {rx.noRxReason === 'OTC medication recommended' && (<Textarea label="OTC Details" value={rx.otcRecommendation} onChange={(v: string) => setRx({ ...rx, otcRecommendation: v })} placeholder="e.g., Recommended acetaminophen 500mg q4-6h PRN." />)}
+                        {rx.noRxReason === 'Referral to physician/NP required' && (<><Toggle checked={rx.isReferral === true} onChange={(v: boolean) => setRx({ ...rx, isReferral: v })} label="Referral made" />{rx.isReferral && <Input label="Referred to" value={rx.referredTo} onChange={(v: string) => setRx({ ...rx, referredTo: v })} placeholder="e.g., Family physician" />}</>)}
+                        <Textarea label="Rationale" value={rx.noRxRationale} onChange={(v: string) => setRx({ ...rx, noRxRationale: v })} placeholder="Document clinical rationale..." />
                       </div>
                     )}
-                    {rx.noRxReason === 'OTC medication recommended' && (
-                      <Textarea label="OTC Recommendation Details" value={rx.otcRecommendation} onChange={(v: string) => setRx({ ...rx, otcRecommendation: v })} placeholder="e.g., Recommended acetaminophen 500mg q4-6h PRN." />
-                    )}
-                    <Textarea label="Rationale for no prescription" value={rx.noRxRationale} onChange={(v: string) => setRx({ ...rx, noRxRationale: v })} placeholder="Document clinical rationale..." />
-                  </div>
+                  </>
                 )}
 
                 {/* Red Flag Override Rationale */}
                 {hasRedFlags && rx.redFlagAcknowledged && !rx.isReferral && (
                   <div style={{ marginTop: 16, padding: 16, background: 'rgba(245,158,11,0.08)', borderRadius: 10, border: `1px solid rgba(245,158,11,0.25)` }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: warning, marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Red Flag Override — Rationale Required</div>
-                    <Textarea label="Why is treatment appropriate despite red flag(s)?" value={rx.redFlagOverrideReason} onChange={(v: string) => setRx({ ...rx, redFlagOverrideReason: v })} placeholder="e.g., Patient reports mild fever of 37.8°C which resolved with acetaminophen. No other systemic signs. Presentation otherwise consistent with uncomplicated condition. Proceeding with treatment and close follow-up." />
+                    <div style={{ fontSize: 12, fontWeight: 600, color: warning, marginBottom: 12, textTransform: 'uppercase' }}>Red Flag Override — Rationale Required</div>
+                    <Textarea label="Why is treatment appropriate despite red flag(s)?" value={rx.redFlagOverrideReason} onChange={(v: string) => setRx({ ...rx, redFlagOverrideReason: v })} placeholder="e.g., Mild fever resolved. No systemic signs. Proceeding with close follow-up." />
                   </div>
                 )}
 
-                {/* Refills — for Rx issued */}
+                {/* Refills */}
                 {rx.selectedDrug >= 0 && (
                   <div style={{ marginTop: 20, padding: 16, background: surfaceAlt, borderRadius: 10, border: `1px solid ${border}` }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: muted, marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Refills</div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: muted, marginBottom: 12, textTransform: 'uppercase' }}>Refills</div>
                     <Select label="Number of refills" value={rx.refills != null ? String(rx.refills) : '0'} onChange={(v: string) => setRx({ ...rx, refills: parseInt(v) || 0 })} options={['0', '1', '2', '3']} />
-                    {rx.refills > 0 && (
-                      <>
-                        <Textarea label="Refill Rationale (required by OCP)" value={rx.refillRationale} onChange={(v: string) => setRx({ ...rx, refillRationale: v })} placeholder="e.g., Quantity of topical cream may not be sufficient for expected treatment duration." />
-                        <InfoBox color="accent" icon="ℹ" title="OCP Refill Guidance">
-                          Minor ailments are usually short-term conditions. Document your clinical rationale for issuing refills.
-                        </InfoBox>
-                      </>
-                    )}
+                    {rx.refills > 0 && (<><Textarea label="Refill Rationale (OCP)" value={rx.refillRationale} onChange={(v: string) => setRx({ ...rx, refillRationale: v })} placeholder="Document rationale for refills..." /><InfoBox color="accent" icon="ℹ" title="OCP Refill Guidance">Minor ailments are usually short-term. Document rationale.</InfoBox></>)}
                   </div>
                 )}
 
                 {/* Dispensing Location */}
                 {rx.selectedDrug >= 0 && (
                   <div style={{ marginTop: 16, padding: 16, background: surfaceAlt, borderRadius: 10, border: `1px solid ${border}` }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: muted, marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Dispensing Location</div>
-                    <Toggle checked={encounter.dispenseElsewhere === true} onChange={(v: boolean) => setEncounter({ ...encounter, dispenseElsewhere: v })} label="Patient has chosen to have prescription dispensed at another pharmacy" />
-                    {encounter.dispenseElsewhere && (
-                      <Input label="Dispensing Pharmacy Name" value={encounter.dispensingPharmacy} onChange={(v: string) => setEncounter({ ...encounter, dispensingPharmacy: v })} placeholder="Name of pharmacy" />
-                    )}
+                    <div style={{ fontSize: 12, fontWeight: 600, color: muted, marginBottom: 12, textTransform: 'uppercase' }}>Dispensing Location</div>
+                    <Toggle checked={encounter.dispenseElsewhere === true} onChange={(v: boolean) => setEncounter({ ...encounter, dispenseElsewhere: v })} label="Patient chose another pharmacy" />
+                    {encounter.dispenseElsewhere && <Input label="Pharmacy Name" value={encounter.dispensingPharmacy} onChange={(v: string) => setEncounter({ ...encounter, dispensingPharmacy: v })} placeholder="Name of pharmacy" />}
                   </div>
                 )}
 
                 <div style={{ marginTop: 20 }}>
-                  <Textarea label="Clinical Impression / Rationale" value={rx.impression} onChange={(v: string) => setRx({ ...rx, impression: v })} placeholder="Document your clinical assessment and rationale..." />
+                  <Textarea label="Clinical Impression / Rationale" value={rx.impression} onChange={(v: string) => setRx({ ...rx, impression: v })} placeholder="Document your clinical assessment..." />
                   <Textarea label="Counselling Notes" value={rx.counselling} onChange={(v: string) => setRx({ ...rx, counselling: v })} placeholder="Patient education provided..." />
                 </div>
               </>
             )}
           </div>
-          )
-        })()}
+        )}
 
-        {/* ============ FOLLOW-UP STEP - NEW ============ */}
+        {/* ==================== FOLLOW-UP STEP ==================== */}
         {isFollowUpStep && (
           <div>
             <div style={{ padding: 16, background: surfaceAlt, borderRadius: 10, border: `1px solid ${border}`, marginBottom: 16 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: muted, marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Monitoring & Follow-Up Plan</div>
-
+              <div style={{ fontSize: 12, fontWeight: 600, color: muted, marginBottom: 12, textTransform: 'uppercase' }}>Monitoring & Follow-Up Plan</div>
               <Select label="Follow-up timeframe" value={rx.followUpTime} onChange={(v: string) => setRx({ ...rx, followUpTime: v })} options={['24-48 hours', '48-72 hours', '3-5 days', '7 days', '2 weeks', '4 weeks', 'As needed']} required />
-
               <Select label="Follow-up method" value={rx.followUpMethod} onChange={(v: string) => setRx({ ...rx, followUpMethod: v })} options={['In-person', 'Phone call', 'Patient to return if needed', 'Patient to contact if symptoms worsen']} required />
-
-              <Textarea label="Follow-Up Plan Details" value={rx.followUpPlan} onChange={(v: string) => setRx({ ...rx, followUpPlan: v })} placeholder="e.g., Return if symptoms do not improve within 48-72 hours. Seek immediate care if fever develops, symptoms worsen, or new symptoms appear." />
-
-              <Textarea label="When to Seek Urgent Care" value={rx.urgentCriteria} onChange={(v: string) => setRx({ ...rx, urgentCriteria: v })} placeholder="e.g., Seek emergency care if: difficulty breathing, high fever, severe pain, inability to keep fluids down." />
+              <Textarea label="Follow-Up Plan Details" value={rx.followUpPlan} onChange={(v: string) => setRx({ ...rx, followUpPlan: v })} placeholder="e.g., Return if symptoms do not improve within 48-72 hours." />
+              <Textarea label="When to Seek Urgent Care" value={rx.urgentCriteria} onChange={(v: string) => setRx({ ...rx, urgentCriteria: v })} placeholder="e.g., Seek emergency care if: high fever, severe pain." />
             </div>
-
-            {patient.hasPcp === false && (
-              <InfoBox color="warning" icon="⚠" title="No PCP — Enhanced Monitoring Required">
-                As the prescriber without a PCP to notify, you are responsible for ongoing monitoring. Consider scheduling a proactive follow-up. Document your plan to transition care when possible.
-              </InfoBox>
-            )}
-
+            {patient.hasPcp === false && (<InfoBox color="warning" icon="⚠" title="No PCP — Enhanced Monitoring">You are responsible for ongoing monitoring. Consider proactive follow-up.</InfoBox>)}
             <div style={{ padding: 16, background: surfaceAlt, borderRadius: 10, border: `1px solid ${border}` }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: muted, marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Information Gathering</div>
-              <Toggle checked={encounter.techAssisted === true} onChange={(v: boolean) => setEncounter({ ...encounter, techAssisted: v })} label="Patient information gathered by pharmacy technician" />
-              {encounter.techAssisted && (
-                <Input label="Technician Name" value={encounter.techName} onChange={(v: string) => setEncounter({ ...encounter, techName: v })} placeholder="Name of pharmacy technician" />
-              )}
-              <div style={{ fontSize: 11, color: dim, marginTop: 4, lineHeight: 1.5 }}>
-                Pharmacy technicians may gather and document patient information to support the pharmacist's clinical assessment. The clinical assessment and prescribing decision remains the pharmacist's responsibility.
-              </div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: muted, marginBottom: 12, textTransform: 'uppercase' }}>Information Gathering</div>
+              <Toggle checked={encounter.techAssisted === true} onChange={(v: boolean) => setEncounter({ ...encounter, techAssisted: v })} label="Patient info gathered by pharmacy technician" />
+              {encounter.techAssisted && <Input label="Technician Name" value={encounter.techName} onChange={(v: string) => setEncounter({ ...encounter, techName: v })} placeholder="Name" />}
+              <div style={{ fontSize: 11, color: dim, marginTop: 4, lineHeight: 1.5 }}>Clinical assessment and prescribing remains the pharmacist&#39;s responsibility.</div>
             </div>
           </div>
         )}
 
-        {/* ============ REVIEW STEP ============ */}
-        {isReviewStep && (
+        {/* ==================== REVIEW STEP ==================== */}
+        {isReviewStep && (() => {
+          const billing = getBillingInfo()
+          return (
           <div style={{ padding: 16, background: surfaceAlt, borderRadius: 10, border: `1px solid ${border}` }}>
-            {/* Encounter Info */}
+            {/* Encounter */}
             <div style={{ fontSize: 11, fontWeight: 700, color: accent, textTransform: 'uppercase', marginBottom: 8, paddingBottom: 4, borderBottom: `2px solid ${accent}` }}>Encounter</div>
-            {[
-              ['Mode', encounter.mode === 'in_person' ? 'In-Person' : encounter.mode === 'virtual_video' ? 'Virtual (Video)' : 'Virtual (Phone)'],
-              ['Fee', encounter.mode === 'in_person' ? '$18.00' : '$15.00'],
-              ['Tech Assisted', encounter.techAssisted ? `Yes — ${encounter.techName || 'Name not specified'}` : 'No'],
-            ].map(([l, v]) => (
-              <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}>
-                <span style={{ color: muted, fontWeight: 600 }}>{l}</span><span style={{ color: text, textAlign: 'right', maxWidth: '60%' }}>{v}</span>
-              </div>
+            {[['Mode', encounter.mode === 'in_person' ? 'In-Person' : 'Virtual'], ['Consent', encounter.consentObtained ? `Yes (${encounter.consentMethod || ''})` : '⚠ NOT OBTAINED'], ['Self/Family', encounter.selfFamilyCheck ? '✓' : '⚠'], ['Existing Rx', encounter.existingRxCheck ? '✓' : '⚠'], ['Tech', encounter.techAssisted ? `Yes — ${encounter.techName || ''}` : 'No']].map(([l, v]) => (
+              <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}><span style={{ color: muted, fontWeight: 600 }}>{l}</span><span style={{ color: (v as string).includes('⚠') ? warning : text }}>{v}</span></div>
             ))}
 
             {/* Patient */}
             <div style={{ fontSize: 11, fontWeight: 700, color: accent, textTransform: 'uppercase', marginTop: 16, marginBottom: 8, paddingBottom: 4, borderBottom: `2px solid ${accent}` }}>Patient</div>
-            {[['Name', `${patient.firstName} ${patient.lastName}`], ['DOB', patient.dob], ['HCN', patient.hcn || 'N/A'], ['PCP', patient.hasPcp !== false ? patient.pcpName || 'Not specified' : '⚠ No PCP — Pharmacist monitoring'], ['Allergies', patient.allergies || 'NKDA']].map(([l, v]) => (
-              <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}>
-                <span style={{ color: muted, fontWeight: 600 }}>{l}</span><span style={{ color: l === 'PCP' && patient.hasPcp === false ? warning : text, textAlign: 'right', maxWidth: '60%' }}>{v}</span>
-              </div>
+            {[['Name', `${patient.firstName} ${patient.lastName}`], ['DOB', patient.dob], ['HCN', patient.hcn || 'N/A'], ['PCP', patient.hasPcp !== false ? patient.pcpName || 'Not specified' : '⚠ No PCP'], ['Allergies', patient.allergies || 'NKDA']].map(([l, v]) => (
+              <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}><span style={{ color: muted, fontWeight: 600 }}>{l}</span><span style={{ color: (v as string).includes('⚠') ? warning : text, textAlign: 'right', maxWidth: '60%' }}>{v}</span></div>
             ))}
 
-            {/* Clinical Sections */}
+            {/* Clinical */}
             {sections.map((sec: any) => {
-              const secData = sectionData[sec.id] || {}
-              const filledFields = sec.fields?.filter((f: any) => secData[f.id] !== undefined && secData[f.id] !== '' && secData[f.id] !== false)
-              if (!filledFields || filledFields.length === 0) return null
-              return (
-                <div key={sec.id}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: accent, textTransform: 'uppercase', marginTop: 16, marginBottom: 8, paddingBottom: 4, borderBottom: `2px solid ${accent}` }}>{sec.title}</div>
-                  {filledFields.map((f: any) => (
-                    <div key={f.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}>
-                      <span style={{ color: muted, fontWeight: 600 }}>{f.label}</span>
-                      <span style={{ color: f.is_red_flag && secData[f.id] === true ? danger : text }}>{String(secData[f.id])}</span>
-                    </div>
-                  ))}
-                </div>
-              )
+              const sd = sectionData[sec.id] || {}
+              const filled = sec.fields?.filter((f: any) => sd[f.id] !== undefined && sd[f.id] !== '' && sd[f.id] !== false)
+              if (!filled?.length) return null
+              return (<div key={sec.id}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: accent, textTransform: 'uppercase', marginTop: 16, marginBottom: 8, paddingBottom: 4, borderBottom: `2px solid ${accent}` }}>{sec.title}</div>
+                {filled.map((f: any) => (<div key={f.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}><span style={{ color: muted, fontWeight: 600 }}>{f.label}</span><span style={{ color: f.is_red_flag && sd[f.id] === true ? danger : text }}>{String(sd[f.id])}</span></div>))}
+              </div>)
             })}
 
             {/* Treatment */}
             <div style={{ fontSize: 11, fontWeight: 700, color: accent, textTransform: 'uppercase', marginTop: 16, marginBottom: 8, paddingBottom: 4, borderBottom: `2px solid ${accent}` }}>Treatment</div>
-            {[
-              ['Drug', rx.selectedDrug >= 0 ? drugs[rx.selectedDrug]?.drug : rx.selectedDrug === -1 ? 'Self-care only' : 'Not selected'],
-              ...(rx.selectedDrug >= 0 && drugs[rx.selectedDrug] ? [
-                ['Directions', drugs[rx.selectedDrug].sig],
-                ['Qty', String(drugs[rx.selectedDrug].qty)],
-                ['Refills', String(rx.refills || 0)],
-                ...(rx.refills > 0 ? [['Refill Rationale', rx.refillRationale || '—']] : []),
-                ['Dispense at', encounter.dispenseElsewhere ? encounter.dispensingPharmacy || 'Another pharmacy' : staff.pharmacies?.name || 'This pharmacy'],
-              ] : []),
-            ].map(([l, v]) => (
-              <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}>
-                <span style={{ color: muted, fontWeight: 600 }}>{l}</span><span style={{ color: text, textAlign: 'right', maxWidth: '60%' }}>{v}</span>
-              </div>
-            ))}
-            {rx.impression && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}>
-                <span style={{ color: muted, fontWeight: 600 }}>Impression</span><span style={{ color: text, textAlign: 'right', maxWidth: '60%' }}>{rx.impression}</span>
-              </div>
-            )}
+            {rx.isReferral ? (
+              <>{[['Decision', 'REFERRAL'], ['Referred to', rx.referredTo || '—'], ['Reason', rx.noRxRationale || '—']].map(([l, v]) => (<div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}><span style={{ color: muted, fontWeight: 600 }}>{l}</span><span style={{ color: warning }}>{v}</span></div>))}</>
+            ) : rx.selectedDrug >= 0 && drugs[rx.selectedDrug] ? (
+              <>{[['Drug', drugs[rx.selectedDrug].drug], ['Sig', drugs[rx.selectedDrug].sig], ['Qty', String(drugs[rx.selectedDrug].qty)], ['Refills', String(rx.refills || 0)], ...(rx.refills > 0 ? [['Refill Rationale', rx.refillRationale || '—']] : []), ['Dispense', encounter.dispenseElsewhere ? encounter.dispensingPharmacy || 'Another' : staff.pharmacies?.name || 'This pharmacy']].map(([l, v]) => (<div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}><span style={{ color: muted, fontWeight: 600 }}>{l}</span><span style={{ color: text, textAlign: 'right', maxWidth: '60%' }}>{v}</span></div>))}</>
+            ) : rx.selectedDrug === -1 ? (
+              <>{[['Decision', 'No Rx Issued'], ['Reason', rx.noRxReason || '—'], ...(rx.noRxRationale ? [['Rationale', rx.noRxRationale]] : []), ...(rx.otcRecommendation ? [['OTC', rx.otcRecommendation]] : [])].map(([l, v]) => (<div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}><span style={{ color: muted, fontWeight: 600 }}>{l}</span><span style={{ color: text, textAlign: 'right', maxWidth: '60%' }}>{v}</span></div>))}</>
+            ) : (<div style={{ padding: '5px 0', fontSize: 13, color: warning }}>⚠ No treatment selected</div>)}
+            {rx.impression && (<div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}><span style={{ color: muted, fontWeight: 600 }}>Impression</span><span style={{ color: text, textAlign: 'right', maxWidth: '60%' }}>{rx.impression}</span></div>)}
+            {hasRedFlags && rx.redFlagOverrideReason && (<div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}><span style={{ color: warning, fontWeight: 600 }}>Red Flag Override</span><span style={{ color: text, textAlign: 'right', maxWidth: '60%' }}>{rx.redFlagOverrideReason}</span></div>)}
 
             {/* Follow-Up */}
-            <div style={{ fontSize: 11, fontWeight: 700, color: accent, textTransform: 'uppercase', marginTop: 16, marginBottom: 8, paddingBottom: 4, borderBottom: `2px solid ${accent}` }}>Follow-Up Plan</div>
-            {[
-              ['Timeframe', rx.followUpTime || '—'],
-              ['Method', rx.followUpMethod || '—'],
-              ['Plan', rx.followUpPlan || '—'],
-              ['Urgent Criteria', rx.urgentCriteria || '—'],
-            ].map(([l, v]) => (
-              <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}>
-                <span style={{ color: muted, fontWeight: 600 }}>{l}</span><span style={{ color: text, textAlign: 'right', maxWidth: '60%' }}>{v}</span>
-              </div>
-            ))}
+            <div style={{ fontSize: 11, fontWeight: 700, color: accent, textTransform: 'uppercase', marginTop: 16, marginBottom: 8, paddingBottom: 4, borderBottom: `2px solid ${accent}` }}>Follow-Up</div>
+            {[['Timeframe', rx.followUpTime || '—'], ['Method', rx.followUpMethod || '—'], ['Plan', rx.followUpPlan || '—'], ['Urgent', rx.urgentCriteria || '—']].map(([l, v]) => (<div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}><span style={{ color: muted, fontWeight: 600 }}>{l}</span><span style={{ color: text, textAlign: 'right', maxWidth: '60%' }}>{v}</span></div>))}
 
-            {/* Billing */}
-            <div style={{ fontSize: 11, fontWeight: 700, color: accent, textTransform: 'uppercase', marginTop: 16, marginBottom: 8, paddingBottom: 4, borderBottom: `2px solid ${accent}` }}>Billing</div>
-            {[
-              ['Code', ailment.odb_service_code],
-              ['Fee', encounter.mode === 'in_person' ? '$18.00' : '$15.00'],
-              ['Mode', encounter.mode === 'in_person' ? 'In-Person' : 'Virtual'],
-            ].map(([l, v]) => (
-              <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}>
-                <span style={{ color: muted, fontWeight: 600 }}>{l}</span><span style={{ color: text }}>{v}</span>
-              </div>
-            ))}
+            {/* HNS Billing */}
+            <div style={{ fontSize: 11, fontWeight: 700, color: accent, textTransform: 'uppercase', marginTop: 16, marginBottom: 8, paddingBottom: 4, borderBottom: `2px solid ${accent}` }}>HNS Billing</div>
+            {[['PIN', billing.pin || '—'], ['Type', billing.pinType], ['Fee', billing.fee], ['Intervention', 'PS'], ['Prescriber ID Ref', '09'], ...(billing.isReferral ? [['SSC', '4 (Referral)']] : [])].map(([l, v]) => (<div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}><span style={{ color: muted, fontWeight: 600 }}>{l}</span><span style={{ color: text }}>{v}</span></div>))}
 
-            {/* PCP Notification */}
-            {patient.hasPcp !== false ? (
-              <InfoBox color="warning" icon="📬" title="PCP Notification Required">
-                A notification letter to {patient.pcpName || 'the PCP'} will be auto-generated upon completion.
-              </InfoBox>
-            ) : (
-              <InfoBox color="warning" icon="⚠" title="No PCP — Pharmacist Monitoring">
-                Patient information will be retained on record. You are responsible for monitoring until care can be transitioned. No PCP notification will be generated.
-              </InfoBox>
-            )}
+            {/* PCP */}
+            {patient.hasPcp !== false ? (<InfoBox color="warning" icon="📬" title="PCP Notification Required">Letter to {patient.pcpName || 'PCP'} will be auto-generated.</InfoBox>) : (<InfoBox color="warning" icon="⚠" title="No PCP">You are responsible for monitoring.</InfoBox>)}
 
-            {/* Pharmacist */}
+            {/* Auth */}
             <div style={{ fontSize: 11, fontWeight: 700, color: accent, textTransform: 'uppercase', marginTop: 16, marginBottom: 8, paddingBottom: 4, borderBottom: `2px solid ${accent}` }}>Authorization</div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}>
-              <span style={{ color: muted, fontWeight: 600 }}>Pharmacist</span><span style={{ color: text }}>{staff.first_name} {staff.last_name}, RPh — OCP #{staff.ocp_registration_number}</span>
-            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}><span style={{ color: muted, fontWeight: 600 }}>Pharmacist</span><span style={{ color: text }}>{staff.first_name} {staff.last_name}, RPh — OCP #{staff.ocp_registration_number}</span></div>
           </div>
-        )}
+          )
+        })()}
 
-        {/* ============ NAVIGATION ============ */}
+        {/* ==================== NAVIGATION ==================== */}
         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 32, paddingTop: 20, borderTop: `1px solid ${border}` }}>
           <button onClick={() => step === 0 ? router.push('/assess/start') : handleStepChange(step - 1)} style={{ padding: '12px 24px', borderRadius: 8, border: `1px solid ${border}`, background: 'transparent', color: text, fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>← Back</button>
           {isLast ? (
-            <button onClick={handleComplete} disabled={saving} style={{ padding: '12px 28px', borderRadius: 8, border: 'none', background: `linear-gradient(135deg, ${success}, #16A34A)`, color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.7 : 1 }}>
-              {saving ? 'Saving...' : 'Complete & Lock Record ✓'}
-            </button>
+            <button onClick={handleComplete} disabled={saving} style={{ padding: '12px 28px', borderRadius: 8, border: 'none', background: `linear-gradient(135deg, ${success}, #16A34A)`, color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.7 : 1 }}>{saving ? 'Saving...' : 'Complete & Lock Record ✓'}</button>
           ) : (
             <button onClick={() => handleStepChange(step + 1)} disabled={isPatientStep && !patientId} style={{ padding: '12px 28px', borderRadius: 8, border: 'none', background: accent, color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer', opacity: (isPatientStep && !patientId) ? 0.5 : 1 }}>Continue →</button>
           )}
         </div>
       </div>
 
-      <div style={{ padding: 24, textAlign: 'center', borderTop: `1px solid ${border}`, marginTop: 40, fontSize: 10, color: dim }}>
-        RXASSESS v0.2 — PIPEDA / PHIPA COMPLIANT — DATA RESIDENCY: CA-CENTRAL-1 — © XCELRX INC.
-      </div>
+      <div style={{ padding: 24, textAlign: 'center', borderTop: `1px solid ${border}`, marginTop: 40, fontSize: 10, color: dim }}>RXASSESS v0.3 — PIPEDA / PHIPA COMPLIANT — CA-CENTRAL-1 — © XCELRX INC.</div>
     </div>
   )
 }
