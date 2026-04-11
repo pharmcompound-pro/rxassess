@@ -67,7 +67,7 @@ export default function Dashboard() {
 
       <div style={{ maxWidth: 900, margin: '0 auto', padding: 24 }}>
         {/* New Assessment Button */}
-        <button onClick={() => router.push('/assess/UTI')} style={{ width: '100%', padding: 16, borderRadius: 10, border: 'none', background: `linear-gradient(135deg, ${accent}, #8B5CF6)`, color: '#fff', fontSize: 16, fontWeight: 700, cursor: 'pointer', marginBottom: 24, boxShadow: '0 4px 16px rgba(59,130,246,0.3)' }}>
+        <button onClick={() => router.push('/assess/start')} style={{ width: '100%', padding: 16, borderRadius: 10, border: 'none', background: `linear-gradient(135deg, ${accent}, #8B5CF6)`, color: '#fff', fontSize: 16, fontWeight: 700, cursor: 'pointer', marginBottom: 24, boxShadow: '0 4px 16px rgba(59,130,246,0.3)' }}>
           + New Minor Ailment Assessment
         </button>
 
