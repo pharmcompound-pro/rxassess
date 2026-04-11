@@ -140,16 +140,46 @@ export async function createPcpNotification(assessmentId: string, patientId: str
   return { data, error }
 }
 
-export async function createClaim(assessmentId: string, pharmacyId: string, patientId: string, serviceCode: string, amount: number) {
+export async function createClaim(
+  assessmentId: string,
+  pharmacyId: string,
+  patientId: string,
+  ailment: any,
+  encounterMode: string,
+  rxIssued: boolean,
+  isReferral: boolean
+) {
   const supabase = createClient()
+  const isVirtual = encounterMode !== 'in_person'
+  let pin = ''
+  let fee = 0
+
+  if (rxIssued && !isVirtual) {
+    pin = ailment.pin_rx_in_person
+    fee = ailment.fee_in_person_cents || 1900
+  } else if (!rxIssued && !isVirtual) {
+    pin = ailment.pin_no_rx_in_person
+    fee = ailment.fee_in_person_cents || 1900
+  } else if (rxIssued && isVirtual) {
+    pin = ailment.pin_rx_virtual
+    fee = ailment.fee_virtual_cents || 1500
+  } else {
+    pin = ailment.pin_no_rx_virtual
+    fee = ailment.fee_virtual_cents || 1500
+  }
+
   const { data, error } = await supabase
     .from('claims')
     .insert({
       assessment_id: assessmentId,
       pharmacy_id: pharmacyId,
       patient_id: patientId,
-      service_code: serviceCode,
-      claim_amount_cents: amount,
+      service_code: ailment.odb_service_code,
+      pin_code: pin,
+      pin_used: pin,
+      claim_amount_cents: fee,
+      special_service_code: isReferral ? '4' : null,
+      prescriber_id_ref: '09',
       status: 'unbilled',
     })
     .select()
