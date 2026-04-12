@@ -473,7 +473,7 @@ export default function DynamicAssessment() {
           return (
           <div>
             {defaults && (
-              <InfoBox color="accent" icon="📋" title={`${ailment.name} — medSask Follow-Up Protocol`}>
+              <InfoBox color="accent" icon="📋" title={`${ailment.name} — Recommended Follow-Up`}>
                 Recommended follow-up: <strong>{defaults.timeframe}</strong> via <strong>{defaults.method?.toLowerCase()}</strong>. Fields below have been pre-populated from evidence-based guidelines. Adjust as clinically appropriate.
               </InfoBox>
             )}
