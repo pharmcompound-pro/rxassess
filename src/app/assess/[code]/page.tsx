@@ -457,15 +457,41 @@ export default function DynamicAssessment() {
         )}
 
         {/* ==================== FOLLOW-UP STEP ==================== */}
-        {isFollowUpStep && (
+        {isFollowUpStep && (() => {
+          const defaults = ailment?.follow_up_defaults
+          // Auto-populate on first visit to this step
+          if (defaults && !rx._followUpInitialized) {
+            setTimeout(() => setRx((prev: any) => ({
+              ...prev,
+              followUpTime: prev.followUpTime || defaults.timeframe || '',
+              followUpMethod: prev.followUpMethod || defaults.method || '',
+              followUpPlan: prev.followUpPlan || defaults.plan || '',
+              urgentCriteria: prev.urgentCriteria || defaults.urgent_criteria || '',
+              _followUpInitialized: true,
+            })), 0)
+          }
+          return (
           <div>
+            {defaults && (
+              <InfoBox color="accent" icon="📋" title={`${ailment.name} — medSask Follow-Up Protocol`}>
+                Recommended follow-up: <strong>{defaults.timeframe}</strong> via <strong>{defaults.method?.toLowerCase()}</strong>. Fields below have been pre-populated from evidence-based guidelines. Adjust as clinically appropriate.
+              </InfoBox>
+            )}
             <div style={{ padding: 16, background: surfaceAlt, borderRadius: 10, border: `1px solid ${border}`, marginBottom: 16 }}>
               <div style={{ fontSize: 12, fontWeight: 600, color: muted, marginBottom: 12, textTransform: 'uppercase' }}>Monitoring & Follow-Up Plan</div>
-              <Select label="Follow-up timeframe" value={rx.followUpTime} onChange={(v: string) => setRx({ ...rx, followUpTime: v })} options={['24-48 hours', '48-72 hours', '3-5 days', '7 days', '2 weeks', '4 weeks', 'As needed']} required />
+              <Select label="Follow-up timeframe" value={rx.followUpTime} onChange={(v: string) => setRx({ ...rx, followUpTime: v })} options={['24-48 hours', '48-72 hours', '3-5 days', '7 days', '2 weeks', '4 weeks', '4-8 weeks', '8-12 weeks', '3 months', '30 days', 'As needed']} required />
               <Select label="Follow-up method" value={rx.followUpMethod} onChange={(v: string) => setRx({ ...rx, followUpMethod: v })} options={['In-person', 'Phone call', 'Patient to return if needed', 'Patient to contact if symptoms worsen']} required />
               <Textarea label="Follow-Up Plan Details" value={rx.followUpPlan} onChange={(v: string) => setRx({ ...rx, followUpPlan: v })} placeholder="e.g., Return if symptoms do not improve within 48-72 hours." />
               <Textarea label="When to Seek Urgent Care" value={rx.urgentCriteria} onChange={(v: string) => setRx({ ...rx, urgentCriteria: v })} placeholder="e.g., Seek emergency care if: high fever, severe pain." />
             </div>
+
+            {defaults?.adverse_effects && (
+              <div style={{ padding: 16, background: surfaceAlt, borderRadius: 10, border: `1px solid ${border}`, marginBottom: 16 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: warning, marginBottom: 12, textTransform: 'uppercase' }}>Adverse Effects Monitoring</div>
+                <div style={{ fontSize: 13, color: text, lineHeight: 1.7, whiteSpace: 'pre-line' }}>{defaults.adverse_effects}</div>
+              </div>
+            )}
+
             {patient.hasPcp === false && (<InfoBox color="warning" icon="⚠" title="No PCP — Enhanced Monitoring">You are responsible for ongoing monitoring. Consider proactive follow-up.</InfoBox>)}
             <div style={{ padding: 16, background: surfaceAlt, borderRadius: 10, border: `1px solid ${border}` }}>
               <div style={{ fontSize: 12, fontWeight: 600, color: muted, marginBottom: 12, textTransform: 'uppercase' }}>Information Gathering</div>
@@ -474,7 +500,8 @@ export default function DynamicAssessment() {
               <div style={{ fontSize: 11, color: dim, marginTop: 4, lineHeight: 1.5 }}>Clinical assessment and prescribing remains the pharmacist&#39;s responsibility.</div>
             </div>
           </div>
-        )}
+          )
+        })()}
 
         {/* ==================== REVIEW STEP ==================== */}
         {isReviewStep && (() => {
