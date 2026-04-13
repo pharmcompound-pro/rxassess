@@ -107,14 +107,14 @@ export async function createPrescription(assessmentId: string, pharmacyId: strin
       pharmacy_id: pharmacyId,
       patient_id: patientId,
       pharmacist_id: pharmacistId,
-      drug_name: drug.drug,
+      drug_name: drug.drugName || drug.drug,
       din: drug.din || null,
-      strength: drug.strength,
-      dosage_form: drug.form || 'tablet',
+      strength: drug.dosageForm || drug.strength || '',
+      dosage_form: drug.dosageForm || drug.form || '',
       directions: drug.sig,
       quantity: String(drug.qty),
-      days_supply: drug.supply,
-      is_odb_eligible: true,
+      days_supply: drug.supplyDays || drug.supply,
+      is_odb_eligible: drug.odbEligible ?? drug.odb_eligible ?? true,
     })
     .select()
     .single()
