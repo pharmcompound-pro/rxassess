@@ -141,7 +141,7 @@ function DynamicAssessmentContent() {
   useEffect(() => {
     if (!resumeId || !staff || resumeLoaded) return
     async function loadDraft() {
-      const assessment = await getAssessmentById(resumeId)
+      const assessment = await getAssessmentById(resumeId!)
       if (!assessment || assessment.is_locked) return
       const cd = assessment.clinical_data || {}
       setAssessmentId(assessment.id)

@@ -73,8 +73,13 @@ export default function Login() {
           </button>
         </form>
 
-        <div style={{ marginTop: 20, fontSize: 10, color: '#4A5268', textAlign: 'center' }}>
-          PIPEDA / PHIPA COMPLIANT — DATA RESIDENCY: CA-CENTRAL-1
+        <div style={{ marginTop: 20, textAlign: 'center' }}>
+          <span style={{ fontSize: 13, color: '#7B8499' }}>Don't have an account? </span>
+          <span onClick={() => router.push('/signup')} style={{ fontSize: 13, color: '#3B82F6', cursor: 'pointer', fontWeight: 600 }}>Sign Up</span>
+        </div>
+
+        <div style={{ marginTop: 16, fontSize: 10, color: '#4A5268', textAlign: 'center' }}>
+          RXASSESS — PIPEDA / PHIPA COMPLIANT
         </div>
       </div>
     </div>
