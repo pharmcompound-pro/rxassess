@@ -1,8 +1,8 @@
 'use client'
-import { useState, useEffect } from 'react'
-import { useRouter, useParams } from 'next/navigation'
+import { useState, useEffect, Suspense } from 'react'
+import { useRouter, useParams, useSearchParams } from 'next/navigation'
 import { useStaff } from '@/lib/useStaff'
-import { getAilment, searchPatients, createPatient, createAssessment, saveDraft, completeAssessment, createPrescription, createPcpNotification, createClaim } from '@/lib/assessments'
+import { getAilment, searchPatients, createPatient, createAssessment, saveDraft, completeAssessment, createPrescription, createPcpNotification, createClaim, createFollowUp, getAssessmentById } from '@/lib/assessments'
 
 const bg = '#0C0F14', surface = '#141820', surfaceAlt = '#1A1F2A', border = '#252B38'
 const text = '#E8ECF4', muted = '#7B8499', dim = '#4A5268'
@@ -67,31 +67,57 @@ function InfoBox({ color, icon, title, children }: any) {
 }
 
 function DynamicSection({ section, data, setData }: any) {
-  const hasRedFlag = section.fields?.some((f: any) => f.is_red_flag && data[f.id] === true)
+  const hasRedFlag = section.fields?.some((f: any) => f.is_red_flag && !f.is_hard_exclusion && data[f.id] === true)
+  const activeExclusions = section.fields?.filter((f: any) => f.is_hard_exclusion && data[f.id] === true) || []
+  const hasHardExclusion = activeExclusions.length > 0
   return (
     <div>
-      <div style={{ padding: 16, background: surfaceAlt, borderRadius: 10, border: `1px solid ${border}`, marginBottom: 16 }}>
+      <div style={{ padding: 16, background: surfaceAlt, borderRadius: 10, border: `1px solid ${hasHardExclusion ? 'rgba(239,68,68,0.5)' : border}`, marginBottom: 16 }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: muted, marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{section.title}</div>
         {section.description && <p style={{ fontSize: 13, color: muted, marginBottom: 12 }}>{section.description}</p>}
         {section.fields?.map((field: any) => {
-          switch (field.type) {
-            case 'boolean': return <Toggle key={field.id} checked={data[field.id] === true} onChange={(v: boolean) => setData({ ...data, [field.id]: v })} label={field.label} isDanger={field.is_red_flag} />
-            case 'select': return <Select key={field.id} label={field.label} value={data[field.id]} onChange={(v: string) => setData({ ...data, [field.id]: v })} options={field.options || []} required={field.required} />
-            case 'textarea': return <Textarea key={field.id} label={field.label} value={data[field.id]} onChange={(v: string) => setData({ ...data, [field.id]: v })} placeholder="" />
-            default: return <Input key={field.id} label={field.label} value={data[field.id]} onChange={(v: string) => setData({ ...data, [field.id]: v })} required={field.required} />
-          }
+          const isTriggered = field.is_hard_exclusion && data[field.id] === true
+          return (
+            <div key={field.id}>
+              {field.type === 'boolean' ? (
+                <Toggle checked={data[field.id] === true} onChange={(v: boolean) => setData({ ...data, [field.id]: v })} label={field.label} isDanger={field.is_red_flag} />
+              ) : field.type === 'select' ? (
+                <Select label={field.label} value={data[field.id]} onChange={(v: string) => setData({ ...data, [field.id]: v })} options={field.options || []} required={field.required} />
+              ) : field.type === 'textarea' ? (
+                <Textarea label={field.label} value={data[field.id]} onChange={(v: string) => setData({ ...data, [field.id]: v })} placeholder="" />
+              ) : (
+                <Input label={field.label} value={data[field.id]} onChange={(v: string) => setData({ ...data, [field.id]: v })} required={field.required} />
+              )}
+              {isTriggered && field.exclusion_reason && (
+                <div style={{ padding: '8px 12px', background: 'rgba(239,68,68,0.1)', borderRadius: 6, border: '1px solid rgba(239,68,68,0.25)', marginBottom: 8, marginTop: -4 }}>
+                  <div style={{ fontSize: 12, color: danger, fontWeight: 600 }}>🛑 {field.exclusion_reason}</div>
+                </div>
+              )}
+            </div>
+          )
         })}
       </div>
-      {hasRedFlag && (
+      {hasHardExclusion && (
+        <div style={{ padding: 16, background: 'rgba(239,68,68,0.12)', borderRadius: 10, border: '2px solid rgba(239,68,68,0.4)', marginBottom: 16 }}>
+          <div style={{ fontWeight: 800, color: danger, fontSize: 15, marginBottom: 8 }}>🛑 Assessment Cannot Proceed to Prescribing</div>
+          <div style={{ fontSize: 13, color: text, lineHeight: 1.6, marginBottom: 8 }}>
+            {activeExclusions.length} exclusion{activeExclusions.length > 1 ? 's' : ''} identified. The patient must be referred. You may continue to document the assessment for billing (No Rx + SSC 4), but prescribing will be blocked.
+          </div>
+          <div style={{ fontSize: 12, color: muted }}>Continue through the remaining steps to complete documentation and generate the referral claim.</div>
+        </div>
+      )}
+      {hasRedFlag && !hasHardExclusion && (
         <InfoBox color="danger" icon="🚨" title="Red Flag(s) Identified — Consider Referral">One or more red flags are present. This may be beyond pharmacist prescribing scope.</InfoBox>
       )}
     </div>
   )
 }
 
-export default function DynamicAssessment() {
+function DynamicAssessmentContent() {
   const params = useParams()
+  const searchParams = useSearchParams()
   const code = params.code as string
+  const resumeId = searchParams.get('resume')
   const { staff, loading: staffLoading } = useStaff()
   const router = useRouter()
   const [ailment, setAilment] = useState<any>(null)
@@ -107,8 +133,45 @@ export default function DynamicAssessment() {
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<any[]>([])
   const [isNewPatient, setIsNewPatient] = useState(false)
+  const [resumeLoaded, setResumeLoaded] = useState(false)
 
   useEffect(() => { async function load() { const d = await getAilment(code); setAilment(d) }; load() }, [code])
+
+  // Resume draft: load saved assessment data
+  useEffect(() => {
+    if (!resumeId || !staff || resumeLoaded) return
+    async function loadDraft() {
+      const assessment = await getAssessmentById(resumeId)
+      if (!assessment || assessment.is_locked) return
+      const cd = assessment.clinical_data || {}
+      setAssessmentId(assessment.id)
+      setPatientId(assessment.patient_id)
+      // Restore patient info
+      if (cd.patient) {
+        setPatient(cd.patient)
+      } else if (assessment.patients) {
+        const p = assessment.patients
+        setPatient({
+          firstName: p.first_name, lastName: p.last_name, dob: p.date_of_birth,
+          hcn: p.health_card_number, phone: p.phone,
+          pcpName: p.primary_care_provider_name, pcpFax: p.pcp_fax,
+          hasPcp: p.has_pcp,
+          allergies: p.allergies?.map((a: any) => a.allergen).join(', ') || '',
+          medications: p.current_medications?.map((m: any) => m.drug).join(', ') || '',
+        })
+      }
+      // Restore section data, prescription, encounter
+      if (cd.sections) setSectionData(cd.sections)
+      if (cd.prescription) setRx(cd.prescription)
+      if (cd.encounter) setEncounter(cd.encounter)
+      // Resume at saved step
+      const savedStep = cd._currentStep
+      if (savedStep != null && savedStep > 0) setStep(savedStep)
+      else setStep(1) // skip patient step since patient is loaded
+      setResumeLoaded(true)
+    }
+    loadDraft()
+  }, [resumeId, staff, resumeLoaded])
   useEffect(() => {
     if (!staff || !searchQuery || searchQuery.length < 2) { setSearchResults([]); return }
     const t = setTimeout(async () => { const r = await searchPatients(staff.pharmacy_id, searchQuery); setSearchResults(r) }, 300)
@@ -128,19 +191,34 @@ export default function DynamicAssessment() {
   const isReviewStep = step === totalSteps - 1
   const sectionIndex = step - 1
 
-  // Compute red flags from section data
+  // Compute red flags from section data (soft — can be overridden)
   function getRedFlagInfo() {
     const redFlagList: string[] = []
     for (const [secId, secData] of Object.entries(sectionData)) {
       const section = sections.find((s: any) => s.id === secId)
       if (!section || !secData || typeof secData !== 'object') continue
       for (const field of (section.fields || [])) {
-        if (field.is_red_flag && (secData as any)[field.id] === true) {
+        if (field.is_red_flag && !field.is_hard_exclusion && (secData as any)[field.id] === true) {
           redFlagList.push(field.label)
         }
       }
     }
     return { hasRedFlags: redFlagList.length > 0, redFlagList }
+  }
+
+  // Compute hard exclusions (cannot be overridden — must refer)
+  function getHardExclusionInfo() {
+    const exclusionList: { label: string; reason: string }[] = []
+    for (const [secId, secData] of Object.entries(sectionData)) {
+      const section = sections.find((s: any) => s.id === secId)
+      if (!section || !secData || typeof secData !== 'object') continue
+      for (const field of (section.fields || [])) {
+        if (field.is_hard_exclusion && (secData as any)[field.id] === true) {
+          exclusionList.push({ label: field.label, reason: field.exclusion_reason || 'Outside pharmacist prescribing scope. Refer.' })
+        }
+      }
+    }
+    return { hasHardExclusions: exclusionList.length > 0, exclusionList }
   }
 
   function getBillingInfo() {
@@ -181,14 +259,15 @@ export default function DynamicAssessment() {
     if (!assessmentId || !staff || !ailment) return; setSaving(true)
     const allData = { patient, sections: sectionData, prescription: rx, encounter }
     const { hasRedFlags } = getRedFlagInfo()
-    const outcome = (rx.isReferral || (hasRedFlags && !rx.redFlagAcknowledged)) ? 'referred_physician' : rx.selectedDrug != null && rx.selectedDrug >= 0 ? 'prescribed' : 'self_care'
+    const { hasHardExclusions } = getHardExclusionInfo()
+    const outcome = (rx.isReferral || hasHardExclusions || (hasRedFlags && !rx.redFlagAcknowledged)) ? 'referred_physician' : rx.selectedDrug != null && rx.selectedDrug >= 0 ? 'prescribed' : 'self_care'
     await completeAssessment(assessmentId, allData, outcome, rx.impression || '')
     if (rx.selectedDrug != null && rx.selectedDrug >= 0 && outcome !== 'referred_physician') {
       await createPrescription(assessmentId, staff.pharmacy_id, patientId!, staff.id, drugs[rx.selectedDrug])
     }
     if (patient.hasPcp !== false && patient.pcpName) {
       const drug = rx.selectedDrug != null && rx.selectedDrug >= 0 ? drugs[rx.selectedDrug] : null
-      const noRxInfo = rx.selectedDrug === -1 ? `\nReason: ${rx.noRxReason || 'See notes'}${rx.noRxRationale ? `\nRationale: ${rx.noRxRationale}` : ''}${rx.otcRecommendation ? `\nOTC: ${rx.otcRecommendation}` : ''}` : ''
+      const noRxInfo = rx.selectedDrug === -1 ? `\nReason: ${rx.noRxReason || 'See notes'}${rx.noRxRationale ? `\nRationale: ${rx.noRxRationale}` : ''}${rx.otcRecommendation ? `\nOTC Recommended: ${rx.otcRecommendation}` : ''}${rx.nonPharmRecommendation ? `\nNon-Pharmacological Therapy: ${rx.nonPharmRecommendation}` : ''}${rx.declineDetails ? `\nPatient Decline: ${rx.declineDetails}` : ''}` : ''
       const referralInfo = rx.isReferral ? `\nReferred to: ${rx.referredTo || 'Another healthcare provider'}` : ''
       const content = `Dear ${patient.pcpName},\n\nRE: ${patient.firstName} ${patient.lastName} (DOB: ${patient.dob})\n\nThis letter is to notify you that the above-named patient presented at ${staff.pharmacies?.name || 'our pharmacy'} on ${new Date().toLocaleDateString('en-CA')} for assessment of ${ailment.name} under the Ontario Minor Ailments Program (O. Reg. 256/24).\n\nAssessment Mode: ${encounter.mode === 'in_person' ? 'In-Person' : 'Virtual'}\n\nClinical Assessment:\n${rx.impression || 'No red flags identified.'}\n\n${drug ? `Treatment: ${drug.drugName || drug.drug}${drug.brandName ? ` (${drug.brandName})` : ''} — ${drug.sig}${rx.refills > 0 ? `\nRefills: ${rx.refills}` : ''}` : `No prescription issued.${noRxInfo}`}${referralInfo}\n\nFollow-Up: ${rx.followUpPlan || 'Return if symptoms worsen.'}\n\nRespectfully,\n${staff.first_name} ${staff.last_name}, RPh\nOCP #${staff.ocp_registration_number}\n${staff.pharmacies?.name}\nTel: ${staff.pharmacies?.phone}`
       await createPcpNotification(assessmentId, patientId!, staff.pharmacy_id, { name: patient.pcpName, fax: patient.pcpFax }, content)
@@ -196,6 +275,15 @@ export default function DynamicAssessment() {
     const rxIssued = rx.selectedDrug != null && rx.selectedDrug >= 0 && outcome !== 'referred_physician'
     const isReferral = outcome === 'referred_physician' || rx.isReferral === true
     await createClaim(assessmentId, staff.pharmacy_id, patientId!, ailment, encounter.mode, rxIssued, isReferral)
+    // Create follow-up record with auto-calculated due date
+    if (rx.followUpTime) {
+      await createFollowUp(assessmentId, staff.pharmacy_id, patientId!, staff.id, {
+        timeframe: rx.followUpTime,
+        method: rx.followUpMethod,
+        plan: rx.followUpPlan,
+        urgentCriteria: rx.urgentCriteria,
+      })
+    }
     setSaving(false); setCompleted(true)
   }
 
@@ -228,16 +316,20 @@ export default function DynamicAssessment() {
   }
 
   const { hasRedFlags, redFlagList } = getRedFlagInfo()
+  const { hasHardExclusions, exclusionList } = getHardExclusionInfo()
 
   return (
     <div style={{ minHeight: '100vh', background: bg, color: text }}>
       {/* HEADER */}
       <div style={{ background: surface, borderBottom: `1px solid ${border}`, padding: '14px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, zIndex: 100 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }} onClick={() => router.push('/dashboard')}>
           <div style={{ width: 32, height: 32, borderRadius: 8, background: 'linear-gradient(135deg, #3B82F6, #8B5CF6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 14, color: '#fff' }}>Rx</div>
           <div><div style={{ fontWeight: 800, fontSize: 15 }}>RxAssess</div><div style={{ fontSize: 10, color: dim }}>MINOR AILMENT DOCUMENTATION</div></div>
         </div>
-        <span style={{ padding: '4px 12px', borderRadius: 6, fontSize: 11, fontWeight: 600, background: 'rgba(167,139,250,0.12)', color: '#A78BFA', border: '1px solid rgba(167,139,250,0.25)' }}>{ailment.code} — {ailment.name}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ padding: '4px 12px', borderRadius: 6, fontSize: 11, fontWeight: 600, background: 'rgba(167,139,250,0.12)', color: '#A78BFA', border: '1px solid rgba(167,139,250,0.25)' }}>{ailment.code} — {ailment.name}</span>
+          <button onClick={() => router.push('/dashboard')} style={{ padding: '6px 14px', borderRadius: 6, border: `1px solid ${border}`, background: 'transparent', color: muted, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>← Dashboard</button>
+        </div>
       </div>
 
       {/* STEP TABS */}
@@ -351,8 +443,40 @@ export default function DynamicAssessment() {
         {/* ==================== PRESCRIBE STEP ==================== */}
         {isPrescribeStep && (
           <div>
-            {/* Red Flag Gate */}
-            {hasRedFlags && !rx.redFlagAcknowledged && (
+            {/* ── HARD EXCLUSION GATE (cannot be overridden) ── */}
+            {hasHardExclusions && (
+              <div style={{ padding: 20, background: 'rgba(239,68,68,0.12)', borderRadius: 10, border: '2px solid rgba(239,68,68,0.5)', marginBottom: 20 }}>
+                <div style={{ fontWeight: 800, color: danger, fontSize: 16, marginBottom: 8 }}>🛑 Outside Pharmacist Prescribing Scope</div>
+                <div style={{ fontSize: 13, color: text, lineHeight: 1.6, marginBottom: 12 }}>
+                  One or more conditions were identified that are <strong style={{ color: danger }}>outside the scope</strong> of Ontario pharmacist prescribing for this ailment. Prescribing is blocked. The patient must be referred.
+                </div>
+                <div style={{ padding: 12, background: 'rgba(239,68,68,0.08)', borderRadius: 8, marginBottom: 16 }}>
+                  {exclusionList.map((ex, i) => (
+                    <div key={i} style={{ padding: '6px 0', borderBottom: i < exclusionList.length - 1 ? `1px solid rgba(239,68,68,0.15)` : 'none' }}>
+                      <div style={{ fontSize: 13, color: danger, fontWeight: 600 }}>🛑 {ex.label}</div>
+                      <div style={{ fontSize: 12, color: muted, marginTop: 2 }}>{ex.reason}</div>
+                    </div>
+                  ))}
+                </div>
+                <button onClick={() => setRx({ ...rx, selectedDrug: -1, noRxReason: 'Hard exclusion — outside pharmacist scope', isReferral: true, redFlagAcknowledged: true, hardExclusionReferral: true })} style={{ width: '100%', padding: 14, borderRadius: 10, border: `2px solid ${danger}`, background: 'rgba(239,68,68,0.15)', color: text, fontSize: 14, fontWeight: 700, cursor: 'pointer', textAlign: 'center' }}>
+                  <span style={{ color: danger }}>→ Refer Patient (Required)</span>
+                  <div style={{ fontSize: 12, color: muted, marginTop: 4 }}>This is a mandatory referral. Claim will include SSC 4.</div>
+                </button>
+              </div>
+            )}
+
+            {/* ── Referral form (shown after hard exclusion referral click) ── */}
+            {hasHardExclusions && rx.hardExclusionReferral && (
+              <div style={{ padding: 16, background: 'rgba(239,68,68,0.08)', borderRadius: 10, border: `1px solid rgba(239,68,68,0.3)`, marginBottom: 16 }}>
+                <div style={{ fontWeight: 700, color: danger, fontSize: 14, marginBottom: 8 }}>Mandatory Referral</div>
+                <Input label="Referred to" value={rx.referredTo} onChange={(v: string) => setRx({ ...rx, referredTo: v })} placeholder="e.g., Family physician, Walk-in clinic, ED" />
+                <Textarea label="Additional notes" value={rx.noRxRationale} onChange={(v: string) => setRx({ ...rx, noRxRationale: v })} placeholder="Any additional clinical notes..." />
+                <InfoBox color="danger" icon="🛑" title="SSC 4 — Mandatory Referral">Prescribing is not permitted. HNS claim will include Special Service Code 4.</InfoBox>
+              </div>
+            )}
+
+            {/* ── SOFT RED FLAG GATE (can be overridden with documentation) ── */}
+            {!hasHardExclusions && hasRedFlags && !rx.redFlagAcknowledged && (
               <div style={{ padding: 20, background: 'rgba(239,68,68,0.12)', borderRadius: 10, border: '2px solid rgba(239,68,68,0.4)', marginBottom: 20 }}>
                 <div style={{ fontWeight: 800, color: danger, fontSize: 16, marginBottom: 8 }}>🚨 Red Flag(s) Identified</div>
                 <div style={{ fontSize: 13, color: text, lineHeight: 1.6, marginBottom: 12 }}>Per OCP guidelines, consider whether referral is appropriate.</div>
@@ -372,11 +496,11 @@ export default function DynamicAssessment() {
               </div>
             )}
 
-            {hasRedFlags && rx.redFlagAcknowledged && !rx.isReferral && (
+            {!hasHardExclusions && hasRedFlags && rx.redFlagAcknowledged && !rx.isReferral && (
               <InfoBox color="warning" icon="⚠" title="Proceeding Despite Red Flags">Document your clinical rationale below.</InfoBox>
             )}
 
-            {(!hasRedFlags || rx.redFlagAcknowledged) && (
+            {!hasHardExclusions && (!hasRedFlags || rx.redFlagAcknowledged) && (
               <>
                 {/* Referral path */}
                 {rx.isReferral && (
@@ -415,11 +539,28 @@ export default function DynamicAssessment() {
                     {/* No Rx Documentation */}
                     {rx.selectedDrug === -1 && (
                       <div style={{ marginTop: 16, padding: 16, background: surfaceAlt, borderRadius: 10, border: `1px solid ${border}` }}>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: warning, marginBottom: 12, textTransform: 'uppercase' }}>No Rx Issued — Documentation Required</div>
-                        <Select label="Reason" value={rx.noRxReason} onChange={(v: string) => setRx({ ...rx, noRxReason: v })} options={['OTC medication recommended', 'Non-pharmacological therapy', 'Patient declined treatment', 'Condition self-limiting', 'Referral to physician/NP required']} required />
-                        {rx.noRxReason === 'OTC medication recommended' && (<Textarea label="OTC Details" value={rx.otcRecommendation} onChange={(v: string) => setRx({ ...rx, otcRecommendation: v })} placeholder="e.g., Recommended acetaminophen 500mg q4-6h PRN." />)}
-                        {rx.noRxReason === 'Referral to physician/NP required' && (<><Toggle checked={rx.isReferral === true} onChange={(v: boolean) => setRx({ ...rx, isReferral: v })} label="Referral made" />{rx.isReferral && <Input label="Referred to" value={rx.referredTo} onChange={(v: string) => setRx({ ...rx, referredTo: v })} placeholder="e.g., Family physician" />}</>)}
-                        <Textarea label="Rationale" value={rx.noRxRationale} onChange={(v: string) => setRx({ ...rx, noRxRationale: v })} placeholder="Document clinical rationale..." />
+                        <div style={{ fontSize: 12, fontWeight: 600, color: warning, marginBottom: 12, textTransform: 'uppercase' }}>No Rx Issued — Documentation Required (ODB)</div>
+                        <Select label="Reason for not prescribing" value={rx.noRxReason} onChange={(v: string) => setRx({ ...rx, noRxReason: v })} options={['OTC medication recommended', 'Non-pharmacological therapy recommended', 'OTC + Non-pharmacological therapy', 'Patient declined treatment', 'Condition self-limiting', 'Referral to physician/NP required']} required />
+                        {(rx.noRxReason === 'OTC medication recommended' || rx.noRxReason === 'OTC + Non-pharmacological therapy') && (
+                          <Textarea label="OTC Medication Details" value={rx.otcRecommendation} onChange={(v: string) => setRx({ ...rx, otcRecommendation: v })} placeholder="e.g., Recommended benzoyl peroxide 5% wash daily, cetirizine 10mg daily PRN" />
+                        )}
+                        {(rx.noRxReason === 'Non-pharmacological therapy recommended' || rx.noRxReason === 'OTC + Non-pharmacological therapy') && (
+                          <Textarea label="Non-Pharmacological Therapy Details" value={rx.nonPharmRecommendation} onChange={(v: string) => setRx({ ...rx, nonPharmRecommendation: v })} placeholder="e.g., Warm compress TID, gentle cleansing, dietary modifications, stress management" />
+                        )}
+                        {rx.noRxReason === 'Patient declined treatment' && (
+                          <Textarea label="Patient Decline Details" value={rx.declineDetails} onChange={(v: string) => setRx({ ...rx, declineDetails: v })} placeholder="e.g., Treatment options discussed. Patient prefers to monitor symptoms. Advised to return if worsening." />
+                        )}
+                        {rx.noRxReason === 'Referral to physician/NP required' && (
+                          <>
+                            <Toggle checked={rx.isReferral === true} onChange={(v: boolean) => setRx({ ...rx, isReferral: v })} label="Referral made" />
+                            {rx.isReferral && <Input label="Referred to" value={rx.referredTo} onChange={(v: string) => setRx({ ...rx, referredTo: v })} placeholder="e.g., Family physician, Walk-in clinic, ED" />}
+                            <InfoBox color="accent" icon="ℹ" title="SSC 4">When referral is made, HNS claim will include Special Service Code 4.</InfoBox>
+                          </>
+                        )}
+                        <Textarea label="Clinical Rationale (required)" value={rx.noRxRationale} onChange={(v: string) => setRx({ ...rx, noRxRationale: v })} placeholder="Document why no prescription was issued and your clinical reasoning..." />
+                        {!rx.noRxRationale && rx.noRxReason && (
+                          <div style={{ fontSize: 11, color: warning, marginTop: 4 }}>⚠ Rationale is required for ODB audit compliance.</div>
+                        )}
                       </div>
                     )}
                   </>
@@ -537,12 +678,19 @@ export default function DynamicAssessment() {
 
             {/* Treatment */}
             <div style={{ fontSize: 11, fontWeight: 700, color: accent, textTransform: 'uppercase', marginTop: 16, marginBottom: 8, paddingBottom: 4, borderBottom: `2px solid ${accent}` }}>Treatment</div>
+            {hasHardExclusions && (
+              <div style={{ padding: 8, background: 'rgba(239,68,68,0.08)', borderRadius: 6, marginBottom: 8, fontSize: 12 }}>
+                <span style={{ color: danger, fontWeight: 700 }}>🛑 MANDATORY REFERRAL</span>
+                <span style={{ color: muted, marginLeft: 8 }}>— Outside pharmacist prescribing scope</span>
+                {exclusionList.map((ex, i) => (<div key={i} style={{ color: danger, fontSize: 11, marginTop: 4 }}>• {ex.label}</div>))}
+              </div>
+            )}
             {rx.isReferral ? (
-              <>{[['Decision', 'REFERRAL'], ['Referred to', rx.referredTo || '—'], ['Reason', rx.noRxRationale || '—']].map(([l, v]) => (<div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}><span style={{ color: muted, fontWeight: 600 }}>{l}</span><span style={{ color: warning }}>{v}</span></div>))}</>
+              <>{[['Decision', rx.hardExclusionReferral ? 'MANDATORY REFERRAL (Scope Exclusion)' : 'REFERRAL'], ['Referred to', rx.referredTo || '—'], ['Reason', rx.noRxRationale || rx.noRxReason || '—']].map(([l, v]) => (<div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}><span style={{ color: muted, fontWeight: 600 }}>{l}</span><span style={{ color: rx.hardExclusionReferral ? danger : warning }}>{v}</span></div>))}</>
             ) : rx.selectedDrug >= 0 && drugs[rx.selectedDrug] ? (
               <>{[['Drug', `${drugs[rx.selectedDrug].drugName || drugs[rx.selectedDrug].drug}${drugs[rx.selectedDrug].brandName ? ` (${drugs[rx.selectedDrug].brandName})` : ''}`], ['Sig', drugs[rx.selectedDrug].sig], ['Qty', String(drugs[rx.selectedDrug].qty)], ['Refills', String(rx.refills || 0)], ...(rx.refills > 0 ? [['Refill Rationale', rx.refillRationale || '—']] : []), ['Dispense', encounter.dispenseElsewhere ? encounter.dispensingPharmacy || 'Another' : staff.pharmacies?.name || 'This pharmacy']].map(([l, v]) => (<div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}><span style={{ color: muted, fontWeight: 600 }}>{l}</span><span style={{ color: text, textAlign: 'right', maxWidth: '60%' }}>{v}</span></div>))}</>
             ) : rx.selectedDrug === -1 ? (
-              <>{[['Decision', 'No Rx Issued'], ['Reason', rx.noRxReason || '—'], ...(rx.noRxRationale ? [['Rationale', rx.noRxRationale]] : []), ...(rx.otcRecommendation ? [['OTC', rx.otcRecommendation]] : [])].map(([l, v]) => (<div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}><span style={{ color: muted, fontWeight: 600 }}>{l}</span><span style={{ color: text, textAlign: 'right', maxWidth: '60%' }}>{v}</span></div>))}</>
+              <>{[['Decision', 'No Rx Issued'], ['Reason', rx.noRxReason || '—'], ...(rx.noRxRationale ? [['Rationale', rx.noRxRationale]] : []), ...(rx.otcRecommendation ? [['OTC Recommended', rx.otcRecommendation]] : []), ...(rx.nonPharmRecommendation ? [['Non-Pharm Therapy', rx.nonPharmRecommendation]] : []), ...(rx.declineDetails ? [['Decline Details', rx.declineDetails]] : [])].map(([l, v]) => (<div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}><span style={{ color: muted, fontWeight: 600 }}>{l}</span><span style={{ color: text, textAlign: 'right', maxWidth: '60%' }}>{v}</span></div>))}</>
             ) : (<div style={{ padding: '5px 0', fontSize: 13, color: warning }}>⚠ No treatment selected</div>)}
             {rx.impression && (<div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}><span style={{ color: muted, fontWeight: 600 }}>Impression</span><span style={{ color: text, textAlign: 'right', maxWidth: '60%' }}>{rx.impression}</span></div>)}
             {hasRedFlags && rx.redFlagOverrideReason && (<div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}><span style={{ color: warning, fontWeight: 600 }}>Red Flag Override</span><span style={{ color: text, textAlign: 'right', maxWidth: '60%' }}>{rx.redFlagOverrideReason}</span></div>)}
@@ -578,5 +726,13 @@ export default function DynamicAssessment() {
 
       <div style={{ padding: 24, textAlign: 'center', borderTop: `1px solid ${border}`, marginTop: 40, fontSize: 10, color: dim }}>RXASSESS v0.3 — PIPEDA / PHIPA COMPLIANT — CA-CENTRAL-1 — © XCELRX INC.</div>
     </div>
+  )
+}
+
+export default function DynamicAssessment() {
+  return (
+    <Suspense fallback={<div style={{ minHeight: '100vh', background: '#0C0F14', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#E8ECF4' }}>Loading...</div>}>
+      <DynamicAssessmentContent />
+    </Suspense>
   )
 }

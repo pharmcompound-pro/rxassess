@@ -187,6 +187,181 @@ export async function createClaim(
   return { data, error }
 }
 
+// ============================================================
+// DRAFT RESUME & ADDENDUM FUNCTIONS
+// ============================================================
+
+/**
+ * Load a specific assessment by ID with all related data.
+ * Used for resuming drafts and viewing completed records.
+ */
+export async function getAssessmentById(assessmentId: string) {
+  const supabase = createClient()
+  const { data, error } = await supabase
+    .from('assessments')
+    .select('*, patients(*), minor_ailments(*)')
+    .eq('id', assessmentId)
+    .single()
+  if (error) console.error('Assessment load error:', error)
+  return data
+}
+
+/**
+ * Add an addendum to a completed (locked) assessment.
+ * Does not modify the original clinical_data — appends to a separate addenda array.
+ */
+export async function addAddendum(assessmentId: string, staffId: string, staffName: string, note: string) {
+  const supabase = createClient()
+  // First get current addenda
+  const { data: current } = await supabase
+    .from('assessments')
+    .select('clinical_data')
+    .eq('id', assessmentId)
+    .single()
+
+  const existingAddenda = current?.clinical_data?.addenda || []
+  const newAddendum = {
+    id: crypto.randomUUID(),
+    date: new Date().toISOString(),
+    staffId,
+    staffName,
+    note,
+  }
+
+  // Update only the addenda array inside clinical_data (does not touch other fields)
+  const { data, error } = await supabase
+    .from('assessments')
+    .update({
+      clinical_data: {
+        ...current?.clinical_data,
+        addenda: [...existingAddenda, newAddendum],
+      },
+    })
+    .eq('id', assessmentId)
+    .select()
+    .single()
+
+  return { data, error }
+}
+
+// ============================================================
+// FOLLOW-UP FUNCTIONS
+// ============================================================
+
+/**
+ * Calculate a due date from a follow-up timeframe string.
+ * Maps common timeframe values to actual dates from now.
+ */
+export function calculateFollowUpDueDate(timeframe: string): Date {
+  const now = new Date()
+  const lower = timeframe.toLowerCase().trim()
+
+  // Map timeframe strings to hours
+  const mappings: Record<string, number> = {
+    '24-48 hours': 48,
+    '48-72 hours': 72,
+    '3-5 days': 4 * 24,       // midpoint: 4 days
+    '7 days': 7 * 24,
+    '2 weeks': 14 * 24,
+    '4 weeks': 28 * 24,
+    '4-8 weeks': 6 * 7 * 24,  // midpoint: 6 weeks
+    '8-12 weeks': 10 * 7 * 24,// midpoint: 10 weeks
+    '3 months': 90 * 24,
+    '30 days': 30 * 24,
+    'as needed': 14 * 24,      // default to 2 weeks
+  }
+
+  const hours = mappings[lower] || 72 // default: 72 hours if unrecognized
+  const dueDate = new Date(now.getTime() + hours * 60 * 60 * 1000)
+  return dueDate
+}
+
+/**
+ * Create a follow-up record after assessment completion.
+ * Auto-calculates due date from the follow-up timeframe.
+ */
+export async function createFollowUp(
+  assessmentId: string,
+  pharmacyId: string,
+  patientId: string,
+  pharmacistId: string,
+  followUpData: {
+    timeframe?: string
+    method?: string
+    plan?: string
+    urgentCriteria?: string
+  }
+) {
+  const supabase = createClient()
+  const timeframe = followUpData.timeframe || '48-72 hours'
+  const dueDate = calculateFollowUpDueDate(timeframe)
+
+  const { data, error } = await supabase
+    .from('follow_ups')
+    .insert({
+      assessment_id: assessmentId,
+      pharmacy_id: pharmacyId,
+      patient_id: patientId,
+      pharmacist_id: pharmacistId,
+      due_date: dueDate.toISOString(),
+      follow_up_timeframe: timeframe,
+      follow_up_method: followUpData.method || null,
+      follow_up_plan: followUpData.plan || null,
+      urgent_criteria: followUpData.urgentCriteria || null,
+      status: 'pending',
+    })
+    .select()
+    .single()
+  return { data, error }
+}
+
+/**
+ * Get pending and overdue follow-ups for the dashboard.
+ * Returns follow-ups ordered by due date (overdue first, then upcoming).
+ */
+export async function getFollowUps(pharmacyId: string) {
+  const supabase = createClient()
+  const { data, error } = await supabase
+    .from('follow_ups')
+    .select('*, patients(first_name, last_name, phone), assessments(minor_ailments(name, code))')
+    .eq('pharmacy_id', pharmacyId)
+    .in('status', ['pending'])
+    .order('due_date', { ascending: true })
+    .limit(50)
+
+  if (error) console.error('Follow-up fetch error:', error)
+  return data || []
+}
+
+/**
+ * Complete a follow-up with outcome documentation.
+ */
+export async function completeFollowUp(
+  followUpId: string,
+  staffId: string,
+  outcome: string,
+  notes: string
+) {
+  const supabase = createClient()
+  const { data, error } = await supabase
+    .from('follow_ups')
+    .update({
+      status: 'completed',
+      completed_at: new Date().toISOString(),
+      completed_by: staffId,
+      outcome,
+      outcome_notes: notes,
+    })
+    .eq('id', followUpId)
+    .select()
+    .single()
+  return { data, error }
+}
+
+// ============================================================
+// DASHBOARD FUNCTIONS
+// ============================================================
+
 export async function getTodayAssessments(pharmacyId: string) {
   const supabase = createClient()
   const today = new Date()
