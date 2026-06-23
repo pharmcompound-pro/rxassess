@@ -101,9 +101,9 @@ function DynamicSection({ section, data, setData }: any) {
         <div style={{ padding: 16, background: 'rgba(239,68,68,0.12)', borderRadius: 10, border: '2px solid rgba(239,68,68,0.4)', marginBottom: 16 }}>
           <div style={{ fontWeight: 800, color: danger, fontSize: 15, marginBottom: 8 }}>🛑 Assessment Cannot Proceed to Prescribing</div>
           <div style={{ fontSize: 13, color: text, lineHeight: 1.6, marginBottom: 8 }}>
-            {activeExclusions.length} exclusion{activeExclusions.length > 1 ? 's' : ''} identified. The patient must be referred. You may continue to document the assessment for billing (No Rx + SSC 4), but prescribing will be blocked.
+            {activeExclusions.length} exclusion{activeExclusions.length > 1 ? 's' : ''} identified. The patient must be referred. Prescribing is blocked and no follow-up is scheduled. You may continue to document the referral for billing (No Rx + SSC 4).
           </div>
-          <div style={{ fontSize: 12, color: muted }}>Continue through the remaining steps to complete documentation and generate the referral claim.</div>
+          <div style={{ fontSize: 12, color: muted }}>The assessment proceeds directly to Review to generate the referral claim — the Follow-Up step is skipped.</div>
         </div>
       )}
       {hasRedFlag && !hasHardExclusion && (
@@ -191,6 +191,23 @@ function DynamicAssessmentContent() {
   const isReviewStep = step === totalSteps - 1
   const sectionIndex = step - 1
 
+  // Is a hard exclusion currently active? (drives step-skipping)
+  const hardExclusionActive = (() => {
+    for (const [secId, secData] of Object.entries(sectionData)) {
+      const section = sections.find((s: any) => s.id === secId)
+      if (!section || !secData || typeof secData !== 'object') continue
+      for (const field of (section.fields || [])) {
+        if (field.is_hard_exclusion && (secData as any)[field.id] === true) return true
+      }
+    }
+    return false
+  })()
+
+  // If a hard exclusion becomes active while on the Follow-Up step, move to Review.
+  useEffect(() => {
+    if (hardExclusionActive && step === totalSteps - 2) setStep(totalSteps - 1)
+  }, [hardExclusionActive, step, totalSteps])
+
   // Compute red flags from section data (soft — can be overridden)
   function getRedFlagInfo() {
     const redFlagList: string[] = []
@@ -251,8 +268,14 @@ function DynamicAssessmentContent() {
   }
 
   async function handleStepChange(n: number) {
-    if (assessmentId) await saveDraft(assessmentId, { patient, sections: sectionData, prescription: rx, encounter }, n)
-    setStep(n)
+    let target = n
+    // When a hard exclusion is active, the Follow-Up step is not applicable —
+    // a referred-out patient gets no pharmacist follow-up. Skip it in both directions.
+    if (hardExclusionActive && n === totalSteps - 2) {
+      target = n > step ? totalSteps - 1 : totalSteps - 3  // forward -> Review, back -> Prescribe
+    }
+    if (assessmentId) await saveDraft(assessmentId, { patient, sections: sectionData, prescription: rx, encounter }, target)
+    setStep(target)
   }
 
   async function handleComplete() {
@@ -276,7 +299,8 @@ function DynamicAssessmentContent() {
     const isReferral = outcome === 'referred_physician' || rx.isReferral === true
     await createClaim(assessmentId, staff.pharmacy_id, patientId!, ailment, encounter.mode, rxIssued, isReferral)
     // Create follow-up record with auto-calculated due date
-    if (rx.followUpTime) {
+    // Skip the follow-up record entirely when a hard exclusion forced a referral.
+    if (rx.followUpTime && !hasHardExclusions) {
       await createFollowUp(assessmentId, staff.pharmacy_id, patientId!, staff.id, {
         timeframe: rx.followUpTime,
         method: rx.followUpMethod,
@@ -334,11 +358,15 @@ function DynamicAssessmentContent() {
 
       {/* STEP TABS */}
       <div style={{ padding: '16px 24px 0', display: 'flex', gap: 4, overflowX: 'auto' }}>
-        {stepNames.map((s, i) => (
-          <button key={i} onClick={() => patientId && handleStepChange(i)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 8, border: 'none', background: i === step ? 'rgba(59,130,246,0.12)' : 'transparent', color: i === step ? accent : i < step ? success : dim, fontSize: 12, fontWeight: i === step ? 700 : 500, cursor: patientId ? 'pointer' : 'default', whiteSpace: 'nowrap' }}>
+        {stepNames.map((s, i) => {
+          const isFollowUpTab = i === totalSteps - 2
+          const tabDisabled = !patientId || (hardExclusionActive && isFollowUpTab)
+          return (
+          <button key={i} onClick={() => !tabDisabled && handleStepChange(i)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 8, border: 'none', background: i === step ? 'rgba(59,130,246,0.12)' : 'transparent', color: i === step ? accent : i < step ? success : dim, fontSize: 12, fontWeight: i === step ? 700 : 500, cursor: tabDisabled ? 'default' : 'pointer', whiteSpace: 'nowrap', opacity: (hardExclusionActive && isFollowUpTab) ? 0.4 : 1, textDecoration: (hardExclusionActive && isFollowUpTab) ? 'line-through' : 'none' }}>
             <span>{i < step ? '✓' : stepIcons[i]}</span>{s}
           </button>
-        ))}
+          )
+        })}
       </div>
       <div style={{ margin: '12px 24px 0', height: 3, background: surfaceAlt, borderRadius: 2, overflow: 'hidden' }}>
         <div style={{ height: '100%', width: `${((step + 1) / totalSteps) * 100}%`, background: `linear-gradient(90deg, ${accent}, #8B5CF6)`, borderRadius: 2, transition: 'width 0.3s' }} />
@@ -460,7 +488,7 @@ function DynamicAssessmentContent() {
                 </div>
                 <button onClick={() => setRx({ ...rx, selectedDrug: -1, noRxReason: 'Hard exclusion — outside pharmacist scope', isReferral: true, redFlagAcknowledged: true, hardExclusionReferral: true })} style={{ width: '100%', padding: 14, borderRadius: 10, border: `2px solid ${danger}`, background: 'rgba(239,68,68,0.15)', color: text, fontSize: 14, fontWeight: 700, cursor: 'pointer', textAlign: 'center' }}>
                   <span style={{ color: danger }}>→ Refer Patient (Required)</span>
-                  <div style={{ fontSize: 12, color: muted, marginTop: 4 }}>This is a mandatory referral. Claim will include SSC 4.</div>
+                  <div style={{ fontSize: 12, color: muted, marginTop: 4 }}>This is a mandatory referral. Claim will include SSC 4. Follow-up will be skipped.</div>
                 </button>
               </div>
             )}
@@ -471,7 +499,7 @@ function DynamicAssessmentContent() {
                 <div style={{ fontWeight: 700, color: danger, fontSize: 14, marginBottom: 8 }}>Mandatory Referral</div>
                 <Input label="Referred to" value={rx.referredTo} onChange={(v: string) => setRx({ ...rx, referredTo: v })} placeholder="e.g., Family physician, Walk-in clinic, ED" />
                 <Textarea label="Additional notes" value={rx.noRxRationale} onChange={(v: string) => setRx({ ...rx, noRxRationale: v })} placeholder="Any additional clinical notes..." />
-                <InfoBox color="danger" icon="🛑" title="SSC 4 — Mandatory Referral">Prescribing is not permitted. HNS claim will include Special Service Code 4.</InfoBox>
+                <InfoBox color="danger" icon="🛑" title="SSC 4 — Mandatory Referral">Prescribing is not permitted. HNS claim will include Special Service Code 4. Proceed to Review — no follow-up is scheduled.</InfoBox>
               </div>
             )}
 
@@ -695,9 +723,19 @@ function DynamicAssessmentContent() {
             {rx.impression && (<div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}><span style={{ color: muted, fontWeight: 600 }}>Impression</span><span style={{ color: text, textAlign: 'right', maxWidth: '60%' }}>{rx.impression}</span></div>)}
             {hasRedFlags && rx.redFlagOverrideReason && (<div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}><span style={{ color: warning, fontWeight: 600 }}>Red Flag Override</span><span style={{ color: text, textAlign: 'right', maxWidth: '60%' }}>{rx.redFlagOverrideReason}</span></div>)}
 
-            {/* Follow-Up */}
-            <div style={{ fontSize: 11, fontWeight: 700, color: accent, textTransform: 'uppercase', marginTop: 16, marginBottom: 8, paddingBottom: 4, borderBottom: `2px solid ${accent}` }}>Follow-Up</div>
-            {[['Timeframe', rx.followUpTime || '—'], ['Method', rx.followUpMethod || '—'], ['Plan', rx.followUpPlan || '—'], ['Urgent', rx.urgentCriteria || '—']].map(([l, v]) => (<div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}><span style={{ color: muted, fontWeight: 600 }}>{l}</span><span style={{ color: text, textAlign: 'right', maxWidth: '60%' }}>{v}</span></div>))}
+            {/* Follow-Up — omitted for mandatory referrals (hard exclusion) */}
+            {!hasHardExclusions && (
+              <>
+                <div style={{ fontSize: 11, fontWeight: 700, color: accent, textTransform: 'uppercase', marginTop: 16, marginBottom: 8, paddingBottom: 4, borderBottom: `2px solid ${accent}` }}>Follow-Up</div>
+                {[['Timeframe', rx.followUpTime || '—'], ['Method', rx.followUpMethod || '—'], ['Plan', rx.followUpPlan || '—'], ['Urgent', rx.urgentCriteria || '—']].map(([l, v]) => (<div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${border}`, fontSize: 13 }}><span style={{ color: muted, fontWeight: 600 }}>{l}</span><span style={{ color: text, textAlign: 'right', maxWidth: '60%' }}>{v}</span></div>))}
+              </>
+            )}
+            {hasHardExclusions && (
+              <>
+                <div style={{ fontSize: 11, fontWeight: 700, color: accent, textTransform: 'uppercase', marginTop: 16, marginBottom: 8, paddingBottom: 4, borderBottom: `2px solid ${accent}` }}>Follow-Up</div>
+                <div style={{ padding: '5px 0', fontSize: 13, color: muted }}>Not applicable — patient referred. No pharmacist follow-up scheduled.</div>
+              </>
+            )}
 
             {/* HNS Billing */}
             <div style={{ fontSize: 11, fontWeight: 700, color: accent, textTransform: 'uppercase', marginTop: 16, marginBottom: 8, paddingBottom: 4, borderBottom: `2px solid ${accent}` }}>HNS Billing</div>

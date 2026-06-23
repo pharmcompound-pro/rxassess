@@ -12,7 +12,6 @@ const muted = '#7B8499'
 const dim = '#4A5268'
 const accent = '#3B82F6'
 const danger = '#EF4444'
-const success = '#22C55E'
 
 export default function Signup() {
   const [form, setForm] = useState({
@@ -38,7 +37,6 @@ export default function Signup() {
     e.preventDefault()
     setError('')
 
-    // Validation
     if (!form.firstName.trim() || !form.lastName.trim()) {
       setError('First and last name are required.'); return
     }
@@ -57,7 +55,6 @@ export default function Signup() {
 
     setLoading(true)
 
-    // 1. Create Supabase Auth user
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email: form.email,
       password: form.password,
@@ -85,7 +82,6 @@ export default function Signup() {
 
     const userId = authData.user.id
 
-    // 2. Check if pharmacy already exists, or create new
     let pharmacyId = ''
     const { data: existingPharmacy } = await supabase
       .from('pharmacies')
@@ -102,7 +98,6 @@ export default function Signup() {
         .insert({
           name: form.pharmacyName.trim(),
           province: 'ON',
-          created_by: userId,
         })
         .select()
         .single()
@@ -115,7 +110,6 @@ export default function Signup() {
       pharmacyId = newPharmacy.id
     }
 
-    // 3. Create staff record
     const { error: staffError } = await supabase
       .from('staff')
       .insert({
@@ -137,7 +131,6 @@ export default function Signup() {
 
     setLoading(false)
 
-    // Check if email confirmation is required
     if (authData.user && !authData.session) {
       setStep('verify')
     } else {
@@ -165,7 +158,6 @@ export default function Signup() {
   return (
     <div style={{ minHeight: '100vh', background: bg, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
       <div style={{ width: 420, padding: 32, background: surface, borderRadius: 12, border: `1px solid ${border}` }}>
-        {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 24 }}>
           <div style={{ width: 36, height: 36, borderRadius: 8, background: 'linear-gradient(135deg, #3B82F6, #8B5CF6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 15, color: '#fff' }}>Rx</div>
           <div>
@@ -175,7 +167,6 @@ export default function Signup() {
         </div>
 
         <form onSubmit={handleSignup}>
-          {/* Name row */}
           <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
             <div style={{ flex: 1 }}>
               <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: muted, marginBottom: 6 }}>First Name <span style={{ color: danger }}>*</span></label>
@@ -187,40 +178,32 @@ export default function Signup() {
             </div>
           </div>
 
-          {/* OCP Number */}
           <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: muted, marginBottom: 6 }}>OCP Registration Number <span style={{ color: danger }}>*</span></label>
           <input type="text" value={form.ocpNumber} onChange={e => update('ocpNumber', e.target.value)} placeholder="e.g., 615561" required style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: `1px solid ${border}`, background: surfaceAlt, color: text, fontSize: 14, marginBottom: 16, outline: 'none', boxSizing: 'border-box' }} />
 
-          {/* Pharmacy Name */}
           <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: muted, marginBottom: 6 }}>Pharmacy Name <span style={{ color: danger }}>*</span></label>
           <input type="text" value={form.pharmacyName} onChange={e => update('pharmacyName', e.target.value)} placeholder="e.g., Orleans Community Pharmacy" required style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: `1px solid ${border}`, background: surfaceAlt, color: text, fontSize: 14, marginBottom: 16, outline: 'none', boxSizing: 'border-box' }} />
 
-          {/* Email */}
           <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: muted, marginBottom: 6 }}>Email <span style={{ color: danger }}>*</span></label>
           <input type="email" value={form.email} onChange={e => update('email', e.target.value)} required style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: `1px solid ${border}`, background: surfaceAlt, color: text, fontSize: 14, marginBottom: 16, outline: 'none', boxSizing: 'border-box' }} />
 
-          {/* Password */}
           <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: muted, marginBottom: 6 }}>Password <span style={{ color: danger }}>*</span></label>
           <input type="password" value={form.password} onChange={e => update('password', e.target.value)} placeholder="Min 8 characters" required style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: `1px solid ${border}`, background: surfaceAlt, color: text, fontSize: 14, marginBottom: 16, outline: 'none', boxSizing: 'border-box' }} />
 
-          {/* Confirm Password */}
           <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: muted, marginBottom: 6 }}>Confirm Password <span style={{ color: danger }}>*</span></label>
           <input type="password" value={form.confirmPassword} onChange={e => update('confirmPassword', e.target.value)} required style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: `1px solid ${border}`, background: surfaceAlt, color: text, fontSize: 14, marginBottom: 20, outline: 'none', boxSizing: 'border-box' }} />
 
-          {/* Error */}
           {error && (
             <div style={{ padding: 10, borderRadius: 8, marginBottom: 16, background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: danger, fontSize: 13 }}>
               {error}
             </div>
           )}
 
-          {/* Submit */}
           <button type="submit" disabled={loading} style={{ width: '100%', padding: 12, borderRadius: 8, border: 'none', background: `linear-gradient(135deg, ${accent}, #8B5CF6)`, color: '#fff', fontSize: 14, fontWeight: 700, cursor: loading ? 'wait' : 'pointer', opacity: loading ? 0.7 : 1 }}>
             {loading ? 'Creating Account...' : 'Create Account'}
           </button>
         </form>
 
-        {/* Sign In Link */}
         <div style={{ marginTop: 20, textAlign: 'center' }}>
           <span style={{ fontSize: 13, color: muted }}>Already have an account? </span>
           <span onClick={() => router.push('/login')} style={{ fontSize: 13, color: accent, cursor: 'pointer', fontWeight: 600 }}>Sign In</span>

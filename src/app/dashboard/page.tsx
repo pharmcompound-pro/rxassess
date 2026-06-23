@@ -59,8 +59,8 @@ export default function Dashboard() {
     setCompleteForm({ outcome: '', notes: '' })
   }
 
-  if (loading) return <div style={{ minHeight: '100vh', background: bg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: text }}>Loading...</div>
-  if (!staff) { router.push('/login'); return null }
+  useEffect(() => { if (!loading && !staff) router.push('/login') }, [loading, staff])
+  if (loading || !staff) return <div style={{ minHeight: '100vh', background: bg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: text }}>Loading...</div>
 
   // Categorize follow-ups
   const now = new Date()
@@ -186,6 +186,7 @@ export default function Dashboard() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <span style={{ fontSize: 13, color: muted }}>{staff.first_name} {staff.last_name}, RPh</span>
+          <button onClick={() => router.push('/settings')} style={{ padding: '8px 14px', borderRadius: 8, border: `1px solid ${border}`, background: 'transparent', color: muted, fontSize: 13, cursor: 'pointer' }}>⚙ Settings</button>
           <button onClick={handleLogout} style={{ padding: '8px 16px', borderRadius: 8, border: `1px solid ${border}`, background: 'transparent', color: muted, fontSize: 13, cursor: 'pointer' }}>Sign Out</button>
         </div>
       </div>
