@@ -103,11 +103,12 @@ function DynamicSection({ section, data, setData }: any) {
           <div style={{ fontSize: 13, color: text, lineHeight: 1.6, marginBottom: 8 }}>
             {activeExclusions.length} exclusion{activeExclusions.length > 1 ? 's' : ''} identified. The patient must be referred. Prescribing is blocked and no follow-up is scheduled. You may continue to document the referral for billing (No Rx + SSC 4).
           </div>
-          <div style={{ fontSize: 12, color: muted }}>The assessment proceeds directly to Review to generate the referral claim — the Follow-Up step is skipped.</div>
+          <div style={{ fontSize: 12, color: muted, marginBottom: 8 }}>The assessment proceeds directly to Review to generate the referral claim — the Follow-Up step is skipped.</div>
+          <div style={{ fontSize: 12, color: danger, fontWeight: 700 }}>Hard exclusion: prescribing is not permitted for this finding. Referral is required.</div>
         </div>
       )}
       {hasRedFlag && !hasHardExclusion && (
-        <InfoBox color="danger" icon="🚨" title="Red Flag(s) Identified — Consider Referral">One or more red flags are present. This may be beyond pharmacist prescribing scope.</InfoBox>
+        <InfoBox color="danger" icon="🚨" title="Red Flag(s) Identified — Consider Referral">One or more red flags are present. This is a soft flag — proceeding is at the pharmacist's discretion and clinical judgment. Document your rationale if you treat, or refer if appropriate.</InfoBox>
       )}
     </div>
   )
@@ -182,6 +183,7 @@ function DynamicAssessmentContent() {
   const sections = template?.sections || []
   const drugs = ailment?.eligible_drugs || []
   const stepNames = ['Patient', ...sections.map((s: any) => s.title), 'Prescribe', 'Follow-Up', 'Review']
+  // When a hard exclusion is active, the Prescribe step is really a Referral step.
   const stepIcons = ['👤', ...sections.map(() => '📋'), '💊', '📅', '✓']
   const totalSteps = stepNames.length
   const isLast = step === totalSteps - 1
@@ -202,6 +204,11 @@ function DynamicAssessmentContent() {
     }
     return false
   })()
+
+  // When a hard exclusion is active, the Prescribe step is really a Referral step.
+  const displayStepNames = hardExclusionActive
+    ? stepNames.map((n, i) => (i === stepNames.length - 3 ? 'Referral' : n))
+    : stepNames
 
   // If a hard exclusion becomes active while on the Follow-Up step, move to Review.
   useEffect(() => {
@@ -358,7 +365,7 @@ function DynamicAssessmentContent() {
 
       {/* STEP TABS */}
       <div style={{ padding: '16px 24px 0', display: 'flex', gap: 4, overflowX: 'auto' }}>
-        {stepNames.map((s, i) => {
+        {displayStepNames.map((s, i) => {
           const isFollowUpTab = i === totalSteps - 2
           const tabDisabled = !patientId || (hardExclusionActive && isFollowUpTab)
           return (
@@ -371,9 +378,14 @@ function DynamicAssessmentContent() {
       <div style={{ margin: '12px 24px 0', height: 3, background: surfaceAlt, borderRadius: 2, overflow: 'hidden' }}>
         <div style={{ height: '100%', width: `${((step + 1) / totalSteps) * 100}%`, background: `linear-gradient(90deg, ${accent}, #8B5CF6)`, borderRadius: 2, transition: 'width 0.3s' }} />
       </div>
+      {hardExclusionActive && !isReviewStep && (
+        <div style={{ margin: '12px 24px 0', padding: '10px 16px', background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.5)', borderRadius: 8, color: danger, fontSize: 13, fontWeight: 700, textAlign: 'center' }}>
+          ⚠ Referral required — documentation only. Prescribing is disabled.
+        </div>
+      )}
 
       <div style={{ padding: 24, maxWidth: 640, margin: '0 auto' }}>
-        <h2 style={{ fontSize: 20, fontWeight: 800, margin: '0 0 4px' }}>{stepIcons[step]} {stepNames[step]}</h2>
+        <h2 style={{ fontSize: 20, fontWeight: 800, margin: '0 0 4px' }}>{stepIcons[step]} {displayStepNames[step]}</h2>
         <p style={{ fontSize: 12, color: dim, margin: '0 0 20px' }}>Step {step + 1} of {totalSteps}</p>
 
         {/* ==================== PATIENT STEP ==================== */}
@@ -474,9 +486,9 @@ function DynamicAssessmentContent() {
             {/* ── HARD EXCLUSION GATE (cannot be overridden) ── */}
             {hasHardExclusions && (
               <div style={{ padding: 20, background: 'rgba(239,68,68,0.12)', borderRadius: 10, border: '2px solid rgba(239,68,68,0.5)', marginBottom: 20 }}>
-                <div style={{ fontWeight: 800, color: danger, fontSize: 16, marginBottom: 8 }}>🛑 Outside Pharmacist Prescribing Scope</div>
+                <div style={{ fontWeight: 800, color: danger, fontSize: 16, marginBottom: 8 }}>🛑 Referral — Documentation Only</div>
                 <div style={{ fontSize: 13, color: text, lineHeight: 1.6, marginBottom: 12 }}>
-                  One or more conditions were identified that are <strong style={{ color: danger }}>outside the scope</strong> of Ontario pharmacist prescribing for this ailment. Prescribing is blocked. The patient must be referred.
+                  One or more conditions were identified that are <strong style={{ color: danger }}>outside the scope</strong> of Ontario pharmacist prescribing for this ailment. Prescribing is disabled — this step is for documenting the referral and generating the SSC-4 claim only.
                 </div>
                 <div style={{ padding: 12, background: 'rgba(239,68,68,0.08)', borderRadius: 8, marginBottom: 16 }}>
                   {exclusionList.map((ex, i) => (
